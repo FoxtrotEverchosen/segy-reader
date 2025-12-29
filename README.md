@@ -3,8 +3,6 @@
 Performant SEG-Y reader with Python bindings.  
 Enables access to metadata, trace headers, trace data, and trace ranges from SEG-Y files used in seismic and geophysical measurements (e.g., GPR). Combines Rust for fast parsing with Python for easy integration and GUI development.
 
----
-
 ## Features
 
 - Read SEG-Y textual headers (EBCDIC -> ASCII)  
@@ -23,8 +21,6 @@ Enables access to metadata, trace headers, trace data, and trace ranges from SEG
 ## Unlikely Features
 
 - Add basic data processing functionalities (e.g. gain, filters...)
-
----
 
 ## SEGY data source
 
