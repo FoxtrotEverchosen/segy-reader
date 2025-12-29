@@ -64,11 +64,12 @@ struct BinaryHeader{
     sample_interval: i16,
     samples_per_trace: i16,
     bytes_per_sample: i16,
-    data_format: i16,
+    data_format: DataFormat,
     extended_text_headers: i16,
 }
 
 // Only handles data formats compatible with standard <= Rev1
+#[derive(Debug)]
 enum DataFormat{
     IBMf32,         //Code: 1     bytes: 4
     I32,            // 2            4
@@ -78,28 +79,39 @@ enum DataFormat{
     I8,             // 8            1
 }
 
+// TODO: Improve error handling in rust part. Remove unwraps or switch to expect if possible,
+// TODO: Don't propagate all errors out of Rusts scope
+
 fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
     let mut rdr = Cursor::new(buf);
 
     rdr.set_position(12);
     let traces_per_record = rdr.read_i16::<BigEndian>().unwrap();
-
     rdr.set_position(16);
     let sample_interval = rdr.read_i16::<BigEndian>().unwrap();
-
     rdr.set_position(20);
     let samples_per_trace = rdr.read_i16::<BigEndian>().unwrap();
-
     rdr.set_position(24);
     let data_format = rdr.read_i16::<BigEndian>().unwrap();
+    rdr.set_position(304);
+    let extended_text_headers = rdr.read_i16::<BigEndian>().unwrap();
+
     let bytes_per_sample: i16 = match data_format{
         1 | 2 | 4 | 5 => 4,
         3 => 2,
         8 => 1,
         _ => 4
     };
-    rdr.set_position(304);
-    let extended_text_headers = rdr.read_i16::<BigEndian>().unwrap();
+
+    let data_format = match data_format{
+        1 => DataFormat::IBMf32,
+        2 => DataFormat::I32,
+        3 => DataFormat::I16,
+        4 => DataFormat::FixedPointWGain,
+        5 => DataFormat::IEEf32,
+        8 => DataFormat::I8,
+        _ => panic!("Tried to parse unknown data format")
+    };
 
     BinaryHeader{
         traces_per_record,
