@@ -1,0 +1,11 @@
+[build-system]
+requires = ["maturin>=1.4"]
+build-backend = "maturin"
+
+[project]
+name = "fastsegy"
+version = "0.1.0"
+
+[tool.maturin]
+manifest-path = "../rust/Cargo.toml"
+module-name = "fastsegy"

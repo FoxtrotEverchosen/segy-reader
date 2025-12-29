@@ -1,0 +1,13 @@
+[package]
+name = "fastsegy"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "fastsegy"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.21", features = ["extension-module"] }
+ebcdic = "0.1.2"
+byteorder = "1.5"
