@@ -78,7 +78,7 @@ struct BinaryHeader{
     samples_per_trace: i16,
     bytes_per_sample: i16,
     data_format: DataFormat,
-    extended_text_headers: i16,
+    extended_text_header_count: i16,
     byte_order: ByteOrder
 }
 
@@ -122,7 +122,7 @@ fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
     let sample_interval = read_i16(buf, 16, &byte_order);
     let data_format = read_i16(buf, 24, &byte_order);
     let samples_per_trace = read_i16(buf, 20, &byte_order);
-    let extended_text_headers = read_i16(buf, 304, &byte_order);
+    let extended_text_header_count = read_i16(buf, 304, &byte_order);
 
     let bytes_per_sample: i16 = match data_format{
         1 | 2 | 4 | 5 => 4,
@@ -147,7 +147,7 @@ fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
         samples_per_trace,
         bytes_per_sample,
         data_format,
-        extended_text_headers,
+        extended_text_header_count,
         byte_order
     }
 }
@@ -171,7 +171,7 @@ fn approx_trace_number(b_header: &BinaryHeader, path: &str) -> u64 {
 
 fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Error> {
     let mut file = File::open(path)?;
-    let start: u64 = 3600 + b_header.extended_text_headers as u64 * 3200;
+    let start: u64 = 3600 + b_header.extended_text_header_count as u64 * 3200;
 
     file.seek(SeekFrom::Start(start))?;
     let mut count: u64 = 0;
@@ -186,10 +186,7 @@ fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Err
         }
 
         // Bytes 115 and 116 of trace header hold the numbers of samples in current trace
-        let samples_in_trace = u16::from_be_bytes([
-            header[114],
-            header[115],
-        ]);
+        let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
 
         let samples = if samples_in_trace == 0 {
             b_header.samples_per_trace as u64
@@ -198,10 +195,42 @@ fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Err
         };
 
         let data_bytes = samples * b_header.bytes_per_sample as u64;
-        file.seek(SeekFrom::Current(data_bytes as i64))?;
+
+        // Get samples from trace n.5000
+        if count == 5000{
+            let mut raw = vec![0u8; data_bytes as usize];
+            file.read_exact(&mut raw)?;
+            let samples_f32 = decode_ibm_trace(&raw);
+            println!("{:#?}", samples_f32)
+        }else{
+            file.seek(SeekFrom::Current(data_bytes as i64))?;
+        }
+
         count += 1;
     }
     Ok(count)
 }
 
 //TODO: parse trace data based on used data format
+
+fn ibmf32_from_be(bytes: [u8; 4]) -> f32{
+    // ibmf32 -> 1 sign bit, 7 exponent bits, 24 mantissa bits
+    // unlike IEEE754 uses base 16 exponent (IEEE uses base 2)
+    let word = u32::from_be_bytes(bytes);
+
+    if word == 0 {return 0.0;}
+
+    let sign = if (word & 0x8000_0000) != 0 { -1.0 } else { 1.0 };
+    let exponent = ((word >> 24) & 0x7F) as i32;
+    let mantissa = (word & 0x00FF_FFFF) as f32;
+
+    sign * (mantissa / (1 << 24) as f32) * 16f32.powi(exponent - 64)
+}
+
+fn decode_ibm_trace(data: &[u8]) -> Vec<f32> {
+    data
+        .chunks_exact(4)
+        .map(|b| ibmf32_from_be([b[0], b[1], b[2], b[3]]))
+        .collect()
+}
+
