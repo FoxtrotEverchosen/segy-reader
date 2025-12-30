@@ -7,7 +7,7 @@ use pyo3::types::PyString;
 use byteorder::{ ReadBytesExt, BigEndian};
 
 #[pymodule]
-fn fastsegy(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
+fn fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_header, m)?)?;
     m.add_function(wrap_pyfunction!(get_metadata, m)?)?;
@@ -25,19 +25,32 @@ fn get_header(py: Python) -> PyResult<Bound<PyString>> {
     let mut buf = vec![0u8; 3200]; //header should always be of size 3200 bytes
     f.read_exact(&mut buf)?;
 
-    let mut result = vec![0u8; 3200];
-    Ebcdic::ebcdic_to_ascii(&buf, &mut result, buf.len(), true, false);
+    // In All Revision standards: textual header is 3200 bytes, padded with:
+    // - 0x40 (EBCDIC space) for EBCDIC encoding
+    // - 0x20 (ASCII space) for ASCII encoding
+    // Check last byte to determine encoding
+    // This should work every time, as it is extremely unlikely for a textual header to fill all 3200 bytes
+    let is_ebcdic = buf[3199] == 0x40;
+    let mut ascii_buf = if is_ebcdic {
+        let mut result = vec![0u8; 3200];
+        Ebcdic::ebcdic_to_ascii(&buf, &mut result, buf.len(), true, false);
+        result
+    } else {
+        buf
+    };
 
-    let end = result.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
-    result = result[..end].to_vec();
+    let end = ascii_buf.iter()
+        .rposition(|&b| b != 0)
+        .map_or(0, |i| i + 1);
 
-    let mut s = String::new();
-    for line in result.chunks(80){
-        s.push_str(std::str::from_utf8(line)?);
-        s.push('\n');
-    }
+    ascii_buf = ascii_buf[..end].to_vec();
 
-    Ok(PyString::new_bound(py, s.as_str()))
+    let s = ascii_buf.chunks(80)
+        .map(|line| std::str::from_utf8(line))
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n");
+
+    Ok(PyString::new_bound(py, &s))
 }
 
 #[pyfunction]
@@ -71,7 +84,7 @@ struct BinaryHeader{
 // Only handles data formats compatible with standard <= Rev1
 #[derive(Debug)]
 enum DataFormat{
-    IBMf32,         //Code: 1     bytes: 4
+    IBMf32,         // Code: 1      bytes: 4
     I32,            // 2            4
     I16,            // 3            2
     FixedPointWGain,// 4            4
@@ -110,7 +123,7 @@ fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
         4 => DataFormat::FixedPointWGain,
         5 => DataFormat::IEEf32,
         8 => DataFormat::I8,
-        _ => panic!("Tried to parse unknown data format")
+        _ => panic!("Tried to parse unknown data format") // a temporary(?) solution
     };
 
     BinaryHeader{
