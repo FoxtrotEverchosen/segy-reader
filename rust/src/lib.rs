@@ -1,6 +1,6 @@
 use std::fs;
 use std::fs::File;
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
 use pyo3::types::PyString;
@@ -79,6 +79,7 @@ struct BinaryHeader{
     bytes_per_sample: i16,
     data_format: DataFormat,
     extended_text_headers: i16,
+    byte_order: ByteOrder
 }
 
 // Only handles data formats compatible with standard <= Rev1
@@ -92,22 +93,36 @@ enum DataFormat{
     I8,             // 8            1
 }
 
+#[derive(Debug)]
+enum ByteOrder{
+    BigEndian,
+    LittleEndian,
+    SwappedWord,
+}
+
 // TODO: Improve error handling in rust part. Remove unwraps or switch to expect if possible,
 // TODO: Don't propagate all errors out of Rusts scope
+// TODO: Remove hardcoded paths!
 
 fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
-    let mut rdr = Cursor::new(buf);
+    let byte_order = &buf[96..100];
+    let byte_order: ByteOrder = match byte_order {
+        [0x01, 0x02, 0x03, 0x04] => ByteOrder::BigEndian,
+        [0x04, 0x03, 0x02, 0x01] => ByteOrder::LittleEndian,
+        [0x02, 0x01, 0x04, 0x03] => ByteOrder::SwappedWord,
 
-    rdr.set_position(12);
-    let traces_per_record = rdr.read_i16::<BigEndian>().unwrap();
-    rdr.set_position(16);
-    let sample_interval = rdr.read_i16::<BigEndian>().unwrap();
-    rdr.set_position(20);
-    let samples_per_trace = rdr.read_i16::<BigEndian>().unwrap();
-    rdr.set_position(24);
-    let data_format = rdr.read_i16::<BigEndian>().unwrap();
-    rdr.set_position(304);
-    let extended_text_headers = rdr.read_i16::<BigEndian>().unwrap();
+        // SEG-Y rev0 assumes BigEndian only
+        [0x00, 0x00, 0x00, 0x00] => ByteOrder::BigEndian,
+        _ => {
+            panic!("Unknown SEG-Y byte order in file binary header")
+        },
+    };
+
+    let traces_per_record = read_i16(buf, 12, &byte_order);
+    let sample_interval = read_i16(buf, 16, &byte_order);
+    let data_format = read_i16(buf, 24, &byte_order);
+    let samples_per_trace = read_i16(buf, 20, &byte_order);
+    let extended_text_headers = read_i16(buf, 304, &byte_order);
 
     let bytes_per_sample: i16 = match data_format{
         1 | 2 | 4 | 5 => 4,
@@ -133,6 +148,16 @@ fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
         bytes_per_sample,
         data_format,
         extended_text_headers,
+        byte_order
+    }
+}
+
+fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
+    let bytes = [buf[offset], buf[offset + 1]];
+    match order{
+        ByteOrder::BigEndian => i16::from_be_bytes(bytes),
+        ByteOrder::LittleEndian => i16::from_le_bytes(bytes),
+        ByteOrder::SwappedWord => i16::from_be_bytes([bytes[1], bytes[0]]),
     }
 }
 
