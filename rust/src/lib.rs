@@ -1,10 +1,11 @@
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::io::ErrorKind::InvalidData;
 use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
+use pyo3::exceptions::PyTypeError;
 use pyo3::types::PyString;
-use byteorder::{ ReadBytesExt, BigEndian};
 
 #[pymodule]
 fn fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -60,7 +61,10 @@ fn get_metadata(py: Python) -> PyResult<()> {
     f.seek(SeekFrom::Start(3200))?;
     f.read_exact(&mut buf)?;
 
-    let b_header: BinaryHeader = parse_binary_header(&buf);
+    let b_header: BinaryHeader = match parse_binary_header(&buf){
+        Ok(h) => h,
+        Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to parse the binary header of the file")),
+    };
 
     println!("{:#?}", b_header);
 
@@ -93,7 +97,7 @@ enum DataFormat{
     I8,             // 8            1
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum ByteOrder{
     BigEndian,
     LittleEndian,
@@ -104,7 +108,7 @@ enum ByteOrder{
 // TODO: Don't propagate all errors out of Rusts scope
 // TODO: Remove hardcoded paths!
 
-fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
+fn parse_binary_header(buf: &[u8; 400]) -> Result<BinaryHeader, SegyError> {
     let byte_order = &buf[96..100];
     let byte_order: ByteOrder = match byte_order {
         [0x01, 0x02, 0x03, 0x04] => ByteOrder::BigEndian,
@@ -114,7 +118,7 @@ fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
         // SEG-Y rev0 assumes BigEndian only
         [0x00, 0x00, 0x00, 0x00] => ByteOrder::BigEndian,
         _ => {
-            panic!("Unknown SEG-Y byte order in file binary header")
+            return Err(SegyError::UnsupportedDataFormat);
         },
     };
 
@@ -138,10 +142,10 @@ fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
         4 => DataFormat::FixedPointWGain,
         5 => DataFormat::IEEf32,
         8 => DataFormat::I8,
-        _ => panic!("Tried to parse unknown data format") // a temporary(?) solution
+        _ => return Err(SegyError::UnsupportedDataFormat)
     };
 
-    BinaryHeader{
+    Ok(BinaryHeader{
         traces_per_record,
         sample_interval,
         samples_per_trace,
@@ -149,7 +153,7 @@ fn parse_binary_header(buf: &[u8; 400]) -> BinaryHeader {
         data_format,
         extended_text_header_count,
         byte_order
-    }
+    })
 }
 
 fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
@@ -195,17 +199,7 @@ fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Err
         };
 
         let data_bytes = samples * b_header.bytes_per_sample as u64;
-
-        // Get samples from trace n.5000
-        if count == 5000{
-            let mut raw = vec![0u8; data_bytes as usize];
-            file.read_exact(&mut raw)?;
-            let samples_f32 = decode_ibm_trace(&raw);
-            println!("{:#?}", samples_f32)
-        }else{
-            file.seek(SeekFrom::Current(data_bytes as i64))?;
-        }
-
+        file.seek(SeekFrom::Current(data_bytes as i64))?;
         count += 1;
     }
     Ok(count)
@@ -222,15 +216,135 @@ fn ibmf32_from_be(bytes: [u8; 4]) -> f32{
 
     let sign = if (word & 0x8000_0000) != 0 { -1.0 } else { 1.0 };
     let exponent = ((word >> 24) & 0x7F) as i32;
-    let mantissa = (word & 0x00FF_FFFF) as f32;
+    let mantissa = (word & 0x00FF_FFFF) as f32 / (1 << 24) as f32;
 
-    sign * (mantissa / (1 << 24) as f32) * 16f32.powi(exponent - 64)
+    sign * mantissa * 16f32.powi(exponent - 64)
 }
 
-fn decode_ibm_trace(data: &[u8]) -> Vec<f32> {
-    data
+fn decode_ibm_trace(data: &[u8]) -> TraceData {
+    let trace_data = data
         .chunks_exact(4)
         .map(|b| ibmf32_from_be([b[0], b[1], b[2], b[3]]))
-        .collect()
+        .collect();
+
+    TraceData::F32(trace_data)
 }
 
+fn ieef32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32 {
+    let bits = match byte_order {
+        ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
+        ByteOrder::BigEndian => u32::from_be_bytes(bytes),
+        ByteOrder::SwappedWord => u32::from_be_bytes([bytes[1], bytes[0], bytes[3], bytes[2]]),
+    };
+
+    f32::from_bits(bits)
+}
+
+fn decode_ieef32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+    let trace_data = data
+        .chunks_exact(4)
+        .map(|b| ieef32_from_order([b[0], b[1], b[2], b[3]], byte_order))
+        .collect();
+
+    TraceData::F32(trace_data)
+}
+
+fn decode_i8_trace(data: &[u8]) -> TraceData {
+    let trace = data.iter().map(|&b| b as i8).collect();
+    TraceData::I8(trace)
+}
+
+fn decode_i16_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+    let traces = data.chunks_exact(2)
+        .map(|b| match byte_order {
+            ByteOrder::LittleEndian => i16::from_le_bytes([b[0], b[1]]),
+            ByteOrder::BigEndian => i16::from_be_bytes([b[0], b[1]]),
+            ByteOrder::SwappedWord => i16::from_be_bytes([b[1], b[0]]),
+        })
+        .collect();
+
+    TraceData::I16(traces)
+}
+
+fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+    let traces = data.chunks_exact(4)
+        .map(|b| match byte_order {
+            ByteOrder::LittleEndian => i32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            ByteOrder::BigEndian => i32::from_be_bytes([b[0], b[1], b[2], b[3]]),
+            ByteOrder::SwappedWord => i32::from_be_bytes([b[1], b[0], b[3], b[2]]),
+        })
+        .collect();
+
+    TraceData::I32(traces)
+}
+
+fn get_trace(path: &str, b_header: &BinaryHeader, trace_number: u32) -> Result<TraceData, SegyError> {
+    let mut file = File::open(path)?;
+    let target = trace_number - 1;
+    let start: u64 = 3600 + b_header.extended_text_header_count as u64 * 3200;
+    let byte_order: ByteOrder = b_header.byte_order;
+
+    file.seek(SeekFrom::Start(start))?;
+    let mut count: u64 = 0;
+
+    loop {
+        let mut header = [0u8; 240];
+
+        match file.read_exact(&mut header) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(SegyError::from(e)),
+        }
+
+        let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
+
+        let samples = if samples_in_trace == 0 {
+            b_header.samples_per_trace as u64
+        } else {
+            samples_in_trace as u64
+        };
+
+        let data_bytes = samples * b_header.bytes_per_sample as u64;
+
+        if count == target as u64{
+            let mut raw = vec![0u8; data_bytes as usize];
+            file.read_exact(&mut raw)?;
+
+            let trace: TraceData = match b_header.data_format {
+                DataFormat::IBMf32 => decode_ibm_trace(&raw), //IBM f32 only encoded as big endian
+                DataFormat::IEEf32 => decode_ieef32_trace(&raw, &byte_order),
+                DataFormat::I8 => decode_i8_trace(&raw),
+                DataFormat::I16 => decode_i16_trace(&raw, &byte_order),
+                DataFormat::I32 => decode_i32_trace(&raw, &byte_order),
+                DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
+            };
+            return Ok(trace)
+        }else{
+            file.seek(SeekFrom::Current(data_bytes as i64))?;
+        }
+        count += 1;
+    }
+
+    Err(SegyError::TraceOutOfRange {requested: trace_number})
+}
+
+enum TraceData{
+    F32(Vec<f32>),
+    I16(Vec<i16>),
+    I32(Vec<i32>),
+    I8(Vec<i8>),
+}
+
+#[derive(Debug)]
+pub enum SegyError {
+    Io(std::io::Error),
+    TraceOutOfRange { requested: u32 },
+    UnsupportedDataFormat,
+    CorruptTrace,
+}
+
+impl From<std::io::Error> for SegyError {
+    fn from(e: std::io::Error) -> Self {
+        SegyError::Io(e)
+    }
+}
