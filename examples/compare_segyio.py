@@ -16,8 +16,6 @@ print(f"Shape fastsegy: {data.shape}")
 print(f"Data type: {data.dtype}")
 
 
-# TODO: Add tests to check if results from different type conversions implemented in Rust are the same as in segyio
-
 # Open the file
 with segyio.open(path, 'r', ignore_geometry=True) as f:
 
