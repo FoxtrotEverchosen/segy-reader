@@ -2,7 +2,7 @@ import fastsegy
 import segyio
 import numpy as np
 
-path = r"C:/fastsegy/rust/Kerry3D.segy"
+path = r"C:/fastsegy/Kerry3D.segy"
 header = fastsegy.get_header(path)
 print(header)
 
@@ -19,7 +19,7 @@ print(f"Data type: {data.dtype}")
 # TODO: Add tests to check if results from different type conversions implemented in Rust are the same as in segyio
 
 # Open the file
-with segyio.open(r"C:\fastsegy\rust\Kerry3D.segy", 'r', ignore_geometry=True) as f:
+with segyio.open(path, 'r', ignore_geometry=True) as f:
 
     trace = f.trace[6499]   # segyio is 0 based
 

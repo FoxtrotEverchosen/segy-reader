@@ -7,7 +7,7 @@ use pyo3::types::{PyString, PyDict};
 use numpy::{IntoPyArray};
 
 #[pymodule]
-fn fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_header, m)?)?;
     m.add_function(wrap_pyfunction!(get_metadata, m)?)?;
     m.add_function(wrap_pyfunction!(get_trace, m)?)?;
