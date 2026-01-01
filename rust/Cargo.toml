@@ -8,6 +8,6 @@ name = "fastsegy"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.21", features = ["extension-module"] }
+pyo3 = { version = "0.27.2", features = ["extension-module"] }
 ebcdic = "0.1.2"
-byteorder = "1.5"
+numpy = "0.27.1"

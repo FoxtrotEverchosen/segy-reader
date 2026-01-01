@@ -1,28 +1,23 @@
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::io::ErrorKind::InvalidData;
 use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
 use pyo3::exceptions::PyTypeError;
 use pyo3::types::PyString;
+use numpy::{IntoPyArray};
 
 #[pymodule]
 fn fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_header, m)?)?;
     m.add_function(wrap_pyfunction!(get_metadata, m)?)?;
+    m.add_function(wrap_pyfunction!(get_trace, m)?)?;
     Ok(())
 }
 
 #[pyfunction]
-fn hello() -> &'static str {
-    "Hello from Rust!"
-}
-
-#[pyfunction]
-fn get_header(py: Python) -> PyResult<Bound<PyString>> {
-    let mut f = File::open("C:/fastsegy/rust/Kerry3D.segy")?;
+fn get_header<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyString>> {
+    let mut f = File::open(path)?;
     let mut buf = vec![0u8; 3200]; //header should always be of size 3200 bytes
     f.read_exact(&mut buf)?;
 
@@ -51,12 +46,13 @@ fn get_header(py: Python) -> PyResult<Bound<PyString>> {
         .collect::<Result<Vec<_>, _>>()?
         .join("\n");
 
-    Ok(PyString::new_bound(py, &s))
+    Ok(PyString::new(py, &s))
 }
 
+// TODO: change to return string/dictionary? instead of printing
 #[pyfunction]
-fn get_metadata(py: Python) -> PyResult<()> {
-    let mut f = File::open("C:/fastsegy/rust/Kerry3D.segy")?;
+fn get_metadata(py: Python, path: &str) -> PyResult<()> {
+    let mut f = File::open(path)?;
     let mut buf = [0u8; 400]; //binary header should always be of size 400 bytes
     f.seek(SeekFrom::Start(3200))?;
     f.read_exact(&mut buf)?;
@@ -68,16 +64,37 @@ fn get_metadata(py: Python) -> PyResult<()> {
 
     println!("{:#?}", b_header);
 
-    let traces = approx_trace_number(&b_header, "C:/fastsegy/rust/Kerry3D.segy");
-    println!("how many traces: {}", traces);
-    let actual_traces = count_traces(&b_header,"C:/fastsegy/rust/Kerry3D.segy")?;
+    let actual_traces = count_traces(&b_header, path)?;
     println!("calculated traces: {}", actual_traces);
     Ok(())
 }
 
+#[pyfunction]
+fn get_trace<'py>(py: Python<'py>, path: &str, trace_number: u32) -> PyResult<Bound<'py, PyAny>> {
+    let b_header = match get_binary_header(path){
+        Ok(h) => h,
+        Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to read the binary header of the file")),
+    };
+
+    let trace = match get_trace_data(path, &b_header, trace_number){
+        Ok(t) => t,
+        Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to read the trace data of the file")),
+    };
+
+    trace_to_numpy(py, trace)
+}
+
+fn trace_to_numpy(py: Python, trace: TraceData) -> PyResult<Bound<PyAny>> {
+    Ok(match trace {
+        TraceData::F32(v) => v.into_pyarray(py).into_any(),
+        TraceData::I16(v) => v.into_pyarray(py).into_any(),
+        TraceData::I32(v) => v.into_pyarray(py).into_any(),
+        TraceData::I8(v) => v.into_pyarray(py).into_any(),
+    })
+}
+
 #[derive(Debug)]
 struct BinaryHeader{
-    traces_per_record: i16,
     sample_interval: i16,
     samples_per_trace: i16,
     bytes_per_sample: i16,
@@ -108,6 +125,20 @@ enum ByteOrder{
 // TODO: Don't propagate all errors out of Rusts scope
 // TODO: Remove hardcoded paths!
 
+fn get_binary_header(path: &str) -> Result<BinaryHeader, SegyError> {
+    let mut f = File::open(path)?;
+    let mut buf = [0u8; 400]; //binary header should always be of size 400 bytes
+    f.seek(SeekFrom::Start(3200))?;
+    f.read_exact(&mut buf)?;
+
+    let b_header: BinaryHeader = match parse_binary_header(&buf){
+        Ok(h) => h,
+        Err(_) => return Err(SegyError::ParseFailure),
+    };
+
+    Ok(b_header)
+}
+
 fn parse_binary_header(buf: &[u8; 400]) -> Result<BinaryHeader, SegyError> {
     let byte_order = &buf[96..100];
     let byte_order: ByteOrder = match byte_order {
@@ -122,7 +153,6 @@ fn parse_binary_header(buf: &[u8; 400]) -> Result<BinaryHeader, SegyError> {
         },
     };
 
-    let traces_per_record = read_i16(buf, 12, &byte_order);
     let sample_interval = read_i16(buf, 16, &byte_order);
     let data_format = read_i16(buf, 24, &byte_order);
     let samples_per_trace = read_i16(buf, 20, &byte_order);
@@ -132,7 +162,7 @@ fn parse_binary_header(buf: &[u8; 400]) -> Result<BinaryHeader, SegyError> {
         1 | 2 | 4 | 5 => 4,
         3 => 2,
         8 => 1,
-        _ => 4
+        _ => return Err(SegyError::UnsupportedDataFormat)
     };
 
     let data_format = match data_format{
@@ -146,7 +176,6 @@ fn parse_binary_header(buf: &[u8; 400]) -> Result<BinaryHeader, SegyError> {
     };
 
     Ok(BinaryHeader{
-        traces_per_record,
         sample_interval,
         samples_per_trace,
         bytes_per_sample,
@@ -207,10 +236,16 @@ fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Err
 
 //TODO: parse trace data based on used data format
 
-fn ibmf32_from_be(bytes: [u8; 4]) -> f32{
+fn ibmf32_from_be(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
     // ibmf32 -> 1 sign bit, 7 exponent bits, 24 mantissa bits
     // unlike IEEE754 uses base 16 exponent (IEEE uses base 2)
-    let word = u32::from_be_bytes(bytes);
+    let word = match byte_order {
+        ByteOrder::BigEndian => u32::from_be_bytes(bytes),
+        ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
+        ByteOrder::SwappedWord => {
+            u32::from_be_bytes([bytes[1], bytes[0], bytes[3], bytes[2]])
+        }
+    };
 
     if word == 0 {return 0.0;}
 
@@ -221,10 +256,10 @@ fn ibmf32_from_be(bytes: [u8; 4]) -> f32{
     sign * mantissa * 16f32.powi(exponent - 64)
 }
 
-fn decode_ibm_trace(data: &[u8]) -> TraceData {
+fn decode_ibm_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     let trace_data = data
         .chunks_exact(4)
-        .map(|b| ibmf32_from_be([b[0], b[1], b[2], b[3]]))
+        .map(|b| ibmf32_from_be([b[0], b[1], b[2], b[3]], byte_order))
         .collect();
 
     TraceData::F32(trace_data)
@@ -278,7 +313,7 @@ fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::I32(traces)
 }
 
-fn get_trace(path: &str, b_header: &BinaryHeader, trace_number: u32) -> Result<TraceData, SegyError> {
+fn get_trace_data(path: &str, b_header: &BinaryHeader, trace_number: u32) -> Result<TraceData, SegyError> {
     let mut file = File::open(path)?;
     let target = trace_number - 1;
     let start: u64 = 3600 + b_header.extended_text_header_count as u64 * 3200;
@@ -311,7 +346,7 @@ fn get_trace(path: &str, b_header: &BinaryHeader, trace_number: u32) -> Result<T
             file.read_exact(&mut raw)?;
 
             let trace: TraceData = match b_header.data_format {
-                DataFormat::IBMf32 => decode_ibm_trace(&raw), //IBM f32 only encoded as big endian
+                DataFormat::IBMf32 => decode_ibm_trace(&raw, &byte_order),
                 DataFormat::IEEf32 => decode_ieef32_trace(&raw, &byte_order),
                 DataFormat::I8 => decode_i8_trace(&raw),
                 DataFormat::I16 => decode_i16_trace(&raw, &byte_order),
@@ -341,6 +376,7 @@ pub enum SegyError {
     TraceOutOfRange { requested: u32 },
     UnsupportedDataFormat,
     CorruptTrace,
+    ParseFailure,
 }
 
 impl From<std::io::Error> for SegyError {
