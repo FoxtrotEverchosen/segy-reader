@@ -48,7 +48,6 @@ fn get_header<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyString>
     Ok(PyString::new(py, &s))
 }
 
-// TODO: change to return string/dictionary? instead of printing
 #[pyfunction]
 fn get_metadata<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>> {
     let mut f = File::open(path)?;
@@ -145,10 +144,6 @@ enum ByteOrder{
     LittleEndian,
     SwappedWord,
 }
-
-// TODO: Improve error handling in rust part. Remove unwraps or switch to expect if possible,
-// TODO: Don't propagate all errors out of Rusts scope
-// TODO: Remove hardcoded paths!
 
 fn get_binary_header(path: &str) -> Result<BinaryHeader, SegyError> {
     let mut f = File::open(path)?;
@@ -250,8 +245,6 @@ fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Err
     }
     Ok(count)
 }
-
-//TODO: parse trace data based on used data format
 
 fn ibmf32_from_be(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
     // ibmf32 -> 1 sign bit, 7 exponent bits, 24 mantissa bits
