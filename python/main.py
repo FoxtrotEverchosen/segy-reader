@@ -7,6 +7,7 @@ header = fastsegy.get_header(path)
 print(header)
 
 bin_header = fastsegy.get_metadata(path)
+print(f"Binary header as dict: {bin_header}")
 data = fastsegy.get_trace(path, 6500)   # fastsegy is 1-based
 
 with np.printoptions(threshold=5000):

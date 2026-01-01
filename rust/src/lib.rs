@@ -1,10 +1,9 @@
-use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
 use pyo3::exceptions::PyTypeError;
-use pyo3::types::PyString;
+use pyo3::types::{PyString, PyDict};
 use numpy::{IntoPyArray};
 
 #[pymodule]
@@ -51,7 +50,7 @@ fn get_header<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyString>
 
 // TODO: change to return string/dictionary? instead of printing
 #[pyfunction]
-fn get_metadata(py: Python, path: &str) -> PyResult<()> {
+fn get_metadata<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>> {
     let mut f = File::open(path)?;
     let mut buf = [0u8; 400]; //binary header should always be of size 400 bytes
     f.seek(SeekFrom::Start(3200))?;
@@ -62,11 +61,37 @@ fn get_metadata(py: Python, path: &str) -> PyResult<()> {
         Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to parse the binary header of the file")),
     };
 
-    println!("{:#?}", b_header);
+    let dict = PyDict::new(py);
+    dict.set_item("sample_interval", b_header.sample_interval)?;
+    dict.set_item("samples_per_trace", b_header.samples_per_trace)?;
+    dict.set_item("bytes_per_sample", b_header.bytes_per_sample)?;
+    dict.set_item("extended_text_header_count", b_header.extended_text_header_count)?;
 
-    let actual_traces = count_traces(&b_header, path)?;
-    println!("calculated traces: {}", actual_traces);
-    Ok(())
+    // Convert enums to strings
+    let data_format = match b_header.data_format {
+        DataFormat::IBMf32 => "IBMf32",
+        DataFormat::I32 => "I32",
+        DataFormat::I16 => "I16",
+        DataFormat::FixedPointWGain => "FixedPointWGain",
+        DataFormat::IEEf32 => "IEEf32",
+        DataFormat::I8 => "I8",
+    };
+    dict.set_item("data_format", data_format)?;
+
+    let byte_order = match b_header.byte_order {
+        ByteOrder::BigEndian => "BigEndian",
+        ByteOrder::LittleEndian => "LittleEndian",
+        ByteOrder::SwappedWord => "SwappedWord",
+    };
+    dict.set_item("byte_order", byte_order)?;
+
+    let actual_traces = match count_traces(&b_header, path){
+        Ok(traces) => traces,
+        Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to count traces")),
+    };
+
+    dict.set_item("traces", actual_traces)?;
+    Ok(dict)
 }
 
 #[pyfunction]
@@ -192,14 +217,6 @@ fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
         ByteOrder::LittleEndian => i16::from_le_bytes(bytes),
         ByteOrder::SwappedWord => i16::from_be_bytes([bytes[1], bytes[0]]),
     }
-}
-
-fn approx_trace_number(b_header: &BinaryHeader, path: &str) -> u64 {
-    let filesize: u64 = fs::metadata(path).unwrap().len();
-    let data_bytes: u64 = filesize - 3600;
-
-    let trace_size: u64 = 240 + b_header.bytes_per_sample as u64 * b_header.samples_per_trace as u64;
-    data_bytes / trace_size
 }
 
 fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Error> {
