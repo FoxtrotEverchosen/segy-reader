@@ -96,6 +96,7 @@ fn get_metadata<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>
 
     dict.set_item("traces", actual_traces)?;
     dict.set_item("index", trace_index)?;
+
     Ok(dict)
 }
 
@@ -221,6 +222,9 @@ fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
 }
 
 fn build_trace_index(b_header: &BinaryHeader, path: &str) -> Result<(u64, Vec<u64>), std::io::Error> {
+    // Samples per trace read from binary header might not be correct for older data
+    // Hence it might(?) be necessary to walk through whole file and count traces manually
+
     let mut trace_index: Vec<u64> = Vec::new();
     let mut file = File::open(path)?;
     let start: u64 = 3600 + b_header.extended_text_header_count as u64 * 3200;
@@ -240,7 +244,6 @@ fn build_trace_index(b_header: &BinaryHeader, path: &str) -> Result<(u64, Vec<u6
         trace_index.push(trace_start);
         let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
 
-        // Samples per trace read from binary header might not be correct for older data
         let samples = if samples_in_trace == 0 {
             b_header.samples_per_trace as u64
         } else {
@@ -251,6 +254,7 @@ fn build_trace_index(b_header: &BinaryHeader, path: &str) -> Result<(u64, Vec<u6
         file.seek(SeekFrom::Current(data_bytes as i64))?;
         count += 1;
     }
+
     Ok((count, trace_index))
 }
 
@@ -304,6 +308,7 @@ fn decode_ieef32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
 
 fn decode_i8_trace(data: &[u8]) -> TraceData {
     let trace = data.iter().map(|&b| b as i8).collect();
+
     TraceData::I8(trace)
 }
 
@@ -374,6 +379,7 @@ fn get_trace_data(path: &str, b_header: &BinaryHeader, trace_number: u32, trace_
         DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
         DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
     };
+
     Ok(trace)
 }
 
