@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::io::ErrorKind::InvalidData;
 use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
 use pyo3::exceptions::PyTypeError;
@@ -50,6 +51,8 @@ fn get_header<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyString>
 
 #[pyfunction]
 fn get_metadata<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>> {
+    // TODO: Function should be called on loading file in GUI as it generates index necessary for reading traces
+
     let mut f = File::open(path)?;
     let mut buf = [0u8; 400]; //binary header should always be of size 400 bytes
     f.seek(SeekFrom::Start(3200))?;
@@ -84,23 +87,26 @@ fn get_metadata<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>
     };
     dict.set_item("byte_order", byte_order)?;
 
-    let actual_traces = match count_traces(&b_header, path){
-        Ok(traces) => traces,
-        Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to count traces")),
+    let (actual_traces, trace_index) = match build_trace_index(&b_header, path) {
+        Ok((count, index)) => (count, index),
+        Err(_) => {
+            return Err(PyErr::new::<PyTypeError, _>("Failed to count traces"))
+        }
     };
 
     dict.set_item("traces", actual_traces)?;
+    dict.set_item("index", trace_index)?;
     Ok(dict)
 }
 
 #[pyfunction]
-fn get_trace<'py>(py: Python<'py>, path: &str, trace_number: u32) -> PyResult<Bound<'py, PyAny>> {
+fn get_trace<'py>(py: Python<'py>, path: &str, trace_number: u32, trace_index: Vec<u64>) -> PyResult<Bound<'py, PyAny>> {
     let b_header = match get_binary_header(path){
         Ok(h) => h,
         Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to read the binary header of the file")),
     };
 
-    let trace = match get_trace_data(path, &b_header, trace_number){
+    let trace = match get_trace_data(path, &b_header, trace_number, &trace_index){
         Ok(t) => t,
         Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to read the trace data of the file")),
     };
@@ -214,7 +220,8 @@ fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
     }
 }
 
-fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Error> {
+fn build_trace_index(b_header: &BinaryHeader, path: &str) -> Result<(u64, Vec<u64>), std::io::Error> {
+    let mut trace_index: Vec<u64> = Vec::new();
     let mut file = File::open(path)?;
     let start: u64 = 3600 + b_header.extended_text_header_count as u64 * 3200;
 
@@ -223,16 +230,17 @@ fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Err
 
     loop {
         let mut header = [0u8; 240];
-
+        let trace_start = file.stream_position()?;
         match file.read_exact(&mut header) {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => return Err(e),
         }
 
-        // Bytes 115 and 116 of trace header hold the numbers of samples in current trace
+        trace_index.push(trace_start);
         let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
 
+        // Samples per trace read from binary header might not be correct for older data
         let samples = if samples_in_trace == 0 {
             b_header.samples_per_trace as u64
         } else {
@@ -243,7 +251,7 @@ fn count_traces(b_header: &BinaryHeader, path: &str) -> Result<u64, std::io::Err
         file.seek(SeekFrom::Current(data_bytes as i64))?;
         count += 1;
     }
-    Ok(count)
+    Ok((count, trace_index))
 }
 
 fn ibmf32_from_be(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
@@ -323,54 +331,50 @@ fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::I32(traces)
 }
 
-fn get_trace_data(path: &str, b_header: &BinaryHeader, trace_number: u32) -> Result<TraceData, SegyError> {
+fn get_trace_data(path: &str, b_header: &BinaryHeader, trace_number: u32, trace_index: &[u64]) -> Result<TraceData, SegyError> {
     let mut file = File::open(path)?;
-    let target = trace_number - 1;
-    let start: u64 = 3600 + b_header.extended_text_header_count as u64 * 3200;
     let byte_order: ByteOrder = b_header.byte_order;
 
-    file.seek(SeekFrom::Start(start))?;
-    let mut count: u64 = 0;
+    if trace_number <= 0 {
+        return Err(SegyError::Io(std::io::Error::new(InvalidData, "Trace number is 1-based. Values lower than 0 are not accepted")));
+    }
+    let target = trace_number - 1;
 
-    loop {
-        let mut header = [0u8; 240];
+    let trace_start = if (target as usize)  < trace_index.len() {
+        trace_index[target as usize]
+    }else{
+        return Err(SegyError::TraceOutOfRange {requested: trace_number, trace_count: trace_index.len()})
+    };
 
-        match file.read_exact(&mut header) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(e) => return Err(SegyError::from(e)),
-        }
+    file.seek(SeekFrom::Start(trace_start))?;
+    let mut header = [0u8; 240];
 
-        let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
-
-        let samples = if samples_in_trace == 0 {
-            b_header.samples_per_trace as u64
-        } else {
-            samples_in_trace as u64
-        };
-
-        let data_bytes = samples * b_header.bytes_per_sample as u64;
-
-        if count == target as u64{
-            let mut raw = vec![0u8; data_bytes as usize];
-            file.read_exact(&mut raw)?;
-
-            let trace: TraceData = match b_header.data_format {
-                DataFormat::IBMf32 => decode_ibm_trace(&raw, &byte_order),
-                DataFormat::IEEf32 => decode_ieef32_trace(&raw, &byte_order),
-                DataFormat::I8 => decode_i8_trace(&raw),
-                DataFormat::I16 => decode_i16_trace(&raw, &byte_order),
-                DataFormat::I32 => decode_i32_trace(&raw, &byte_order),
-                DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
-            };
-            return Ok(trace)
-        }else{
-            file.seek(SeekFrom::Current(data_bytes as i64))?;
-        }
-        count += 1;
+    match file.read_exact(&mut header) {
+        Ok(_) => {},
+        Err(e) => return Err(SegyError::from(e)),
     }
 
-    Err(SegyError::TraceOutOfRange {requested: trace_number})
+    let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
+
+    let samples = if samples_in_trace == 0 {
+        b_header.samples_per_trace as u64
+    } else {
+        samples_in_trace as u64
+    };
+
+    let data_bytes = samples * b_header.bytes_per_sample as u64;
+    let mut raw_buf = vec![0u8; data_bytes as usize];
+    file.read_exact(&mut raw_buf)?;
+
+    let trace: TraceData = match b_header.data_format {
+        DataFormat::IBMf32 => decode_ibm_trace(&raw_buf, &byte_order),
+        DataFormat::IEEf32 => decode_ieef32_trace(&raw_buf, &byte_order),
+        DataFormat::I8 => decode_i8_trace(&raw_buf),
+        DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
+        DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
+        DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
+    };
+    Ok(trace)
 }
 
 enum TraceData{
@@ -383,7 +387,7 @@ enum TraceData{
 #[derive(Debug)]
 pub enum SegyError {
     Io(std::io::Error),
-    TraceOutOfRange { requested: u32 },
+    TraceOutOfRange { requested: u32, trace_count: usize },
     UnsupportedDataFormat,
     CorruptTrace,
     ParseFailure,
