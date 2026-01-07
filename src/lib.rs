@@ -1,6 +1,6 @@
 use std::fmt::Display;
 use std::fs::File;
-use std::io::ErrorKind::InvalidData;
+use std::io::ErrorKind::{InvalidInput};
 use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
 use pyo3::exceptions::{PyIOError, PyTypeError};
@@ -199,7 +199,7 @@ impl SegyFile{
         let trace_index = &self.trace_index;
 
         if trace_number <= 0 {
-            return Err(SegyError::Io(std::io::Error::new(InvalidData, "Trace number is 1-based. Values lower than 0 are not accepted")));
+            return Err(SegyError::Io(std::io::Error::new(InvalidInput, "Trace number is 1-based. Values lower than 0 are not accepted")));
         } else if trace_number > trace_index.len() as u32 {
             return Err(SegyError::TraceOutOfRange {
                 requested: trace_number,
