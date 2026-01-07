@@ -19,6 +19,7 @@ name = "fastsegy"
 version = "0.1.0"
 dependencies = [
  "ebcdic",
+ "memmap2",
  "numpy",
  "pyo3",
 ]
@@ -52,6 +53,15 @@ checksum = "a06de3016e9fae57a36fd14dba131fccf49f74b40b7fbdb472f96e361ec71a08"
 dependencies = [
  "autocfg",
  "rawpointer",
+]
+
+[[package]]
+name = "memmap2"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "744133e4a0e0a658e1374cf3bf8e415c4052a15a111acd372764c55b4177d490"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

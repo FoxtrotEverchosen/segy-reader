@@ -1,118 +1,17 @@
+use std::fmt::Display;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use std::io::ErrorKind::InvalidData;
+use std::io::ErrorKind::{InvalidInput};
 use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyIOError, PyTypeError};
 use pyo3::types::{PyString, PyDict};
 use numpy::{IntoPyArray};
+use memmap2::{MmapOptions, Mmap};
 
 #[pymodule]
 fn _fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(get_header, m)?)?;
-    m.add_function(wrap_pyfunction!(get_metadata, m)?)?;
-    m.add_function(wrap_pyfunction!(get_trace, m)?)?;
+    m.add_class::<SegyFile>()?;
     Ok(())
-}
-
-#[pyfunction]
-fn get_header<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyString>> {
-    let mut f = File::open(path)?;
-    let mut buf = vec![0u8; 3200]; //header should always be of size 3200 bytes
-    f.read_exact(&mut buf)?;
-
-    // In All Revision standards: textual header is 3200 bytes, padded with:
-    // - 0x40 (EBCDIC space) for EBCDIC encoding
-    // - 0x20 (ASCII space) for ASCII encoding
-    // Check last byte to determine encoding
-    // This should work every time, as it is extremely unlikely for a textual header to fill all 3200 bytes
-    let is_ebcdic = buf[3199] == 0x40;
-    let mut ascii_buf = if is_ebcdic {
-        let mut result = vec![0u8; 3200];
-        Ebcdic::ebcdic_to_ascii(&buf, &mut result, buf.len(), true, false);
-        result
-    } else {
-        buf
-    };
-
-    let end = ascii_buf.iter()
-        .rposition(|&b| b != 0)
-        .map_or(0, |i| i + 1);
-
-    ascii_buf = ascii_buf[..end].to_vec();
-
-    let s = ascii_buf.chunks(80)
-        .map(|line| std::str::from_utf8(line))
-        .collect::<Result<Vec<_>, _>>()?
-        .join("\n");
-
-    Ok(PyString::new(py, &s))
-}
-
-#[pyfunction]
-fn get_metadata<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>> {
-    // TODO: Function should be called on loading file in GUI as it generates index necessary for reading traces
-
-    let mut f = File::open(path)?;
-    let mut buf = [0u8; 400]; //binary header should always be of size 400 bytes
-    f.seek(SeekFrom::Start(3200))?;
-    f.read_exact(&mut buf)?;
-
-    let b_header: BinaryHeader = match parse_binary_header(&buf){
-        Ok(h) => h,
-        Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to parse the binary header of the file")),
-    };
-
-    let dict = PyDict::new(py);
-    dict.set_item("sample_interval", b_header.sample_interval)?;
-    dict.set_item("samples_per_trace", b_header.samples_per_trace)?;
-    dict.set_item("bytes_per_sample", b_header.bytes_per_sample)?;
-    dict.set_item("extended_text_header_count", b_header.extended_text_header_count)?;
-
-    // Convert enums to strings
-    let data_format = match b_header.data_format {
-        DataFormat::IBMf32 => "IBMf32",
-        DataFormat::I32 => "I32",
-        DataFormat::I16 => "I16",
-        DataFormat::FixedPointWGain => "FixedPointWGain",
-        DataFormat::IEEf32 => "IEEf32",
-        DataFormat::I8 => "I8",
-    };
-    dict.set_item("data_format", data_format)?;
-
-    let byte_order = match b_header.byte_order {
-        ByteOrder::BigEndian => "BigEndian",
-        ByteOrder::LittleEndian => "LittleEndian",
-        ByteOrder::SwappedWord => "SwappedWord",
-    };
-    dict.set_item("byte_order", byte_order)?;
-
-    let (actual_traces, trace_index) = match build_trace_index(&b_header, path) {
-        Ok((count, index)) => (count, index),
-        Err(_) => {
-            return Err(PyErr::new::<PyTypeError, _>("Failed to count traces"))
-        }
-    };
-
-    dict.set_item("traces", actual_traces)?;
-    dict.set_item("index", trace_index)?;
-
-    Ok(dict)
-}
-
-#[pyfunction]
-fn get_trace<'py>(py: Python<'py>, path: &str, trace_number: u32, trace_index: Vec<u64>) -> PyResult<Bound<'py, PyAny>> {
-    let b_header = match get_binary_header(path){
-        Ok(h) => h,
-        Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to read the binary header of the file")),
-    };
-
-    let trace = match get_trace_data(path, &b_header, trace_number, &trace_index){
-        Ok(t) => t,
-        Err(_) => return Err(PyErr::new::<PyTypeError, _>("Failed to read the trace data of the file")),
-    };
-
-    trace_to_numpy(py, trace)
 }
 
 fn trace_to_numpy(py: Python, trace: TraceData) -> PyResult<Bound<PyAny>> {
@@ -152,21 +51,197 @@ enum ByteOrder{
     SwappedWord,
 }
 
-fn get_binary_header(path: &str) -> Result<BinaryHeader, SegyError> {
-    let mut f = File::open(path)?;
-    let mut buf = [0u8; 400]; //binary header should always be of size 400 bytes
-    f.seek(SeekFrom::Start(3200))?;
-    f.read_exact(&mut buf)?;
-
-    let b_header: BinaryHeader = match parse_binary_header(&buf){
-        Ok(h) => h,
-        Err(_) => return Err(SegyError::ParseFailure),
-    };
-
-    Ok(b_header)
+#[pyclass]
+struct SegyFile{
+    b_header: BinaryHeader,
+    trace_index: Vec<u64>,
+    mmap: Mmap,
+    trace_count: u64,
 }
 
-fn parse_binary_header(buf: &[u8; 400]) -> Result<BinaryHeader, SegyError> {
+#[pymethods]
+impl SegyFile {
+    #[new]
+    fn new(path: &str) -> PyResult<Self> {
+        Self::open_segy(path)
+    }
+
+    fn get_trace<'py>(&self, py: Python<'py>, trace_number: u32) -> PyResult<Bound<'py, PyAny>> {
+        let trace = match self.get_trace_data(trace_number){
+            Ok(t) => t,
+            Err(e) => return Err(PyTypeError::new_err(e.to_string()))
+        };
+
+        trace_to_numpy(py, trace)
+    }
+
+    fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        // TODO: Function should be called on loading file in GUI as it generates index necessary for reading traces
+
+        let b_header: &BinaryHeader = &self.b_header;
+
+        let dict = PyDict::new(py);
+        dict.set_item("sample_interval", b_header.sample_interval)?;
+        dict.set_item("samples_per_trace", b_header.samples_per_trace)?;
+        dict.set_item("bytes_per_sample", b_header.bytes_per_sample)?;
+        dict.set_item("extended_text_header_count", b_header.extended_text_header_count)?;
+
+        let data_format = match b_header.data_format {
+            DataFormat::IBMf32 => "IBMf32",
+            DataFormat::I32 => "I32",
+            DataFormat::I16 => "I16",
+            DataFormat::FixedPointWGain => "FixedPointWGain",
+            DataFormat::IEEf32 => "IEEf32",
+            DataFormat::I8 => "I8",
+        };
+        dict.set_item("data_format", data_format)?;
+
+        let byte_order = match b_header.byte_order {
+            ByteOrder::BigEndian => "BigEndian",
+            ByteOrder::LittleEndian => "LittleEndian",
+            ByteOrder::SwappedWord => "SwappedWord",
+        };
+        dict.set_item("byte_order", byte_order)?;
+        dict.set_item("traces", &self.trace_count)?;
+        dict.set_item("index", &self.trace_index)?;
+        dict.set_item("trace_count", &self.trace_count)?;
+
+        Ok(dict)
+    }
+
+    fn get_header<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
+        let data = &self.mmap[..3200];
+
+        // In All Revision standards: textual header is 3200 bytes, padded with:
+        // - 0x40 (EBCDIC space) for EBCDIC encoding
+        // - 0x20 (ASCII space) for ASCII encoding
+        // Check last byte to determine encoding
+        // This should work every time, as it is extremely unlikely for a textual header to fill all 3200 bytes
+        let is_ebcdic = data[3199] == 0x40;
+        let mut ascii_buf = if is_ebcdic {
+            let mut result = vec![0u8; 3200];
+            Ebcdic::ebcdic_to_ascii(&data, &mut result, data.len(), true, false);
+            result
+        } else {
+            data.into()
+        };
+
+        let end = ascii_buf.iter()
+            .rposition(|&b| b != 0)
+            .map_or(0, |i| i + 1);
+
+        ascii_buf = ascii_buf[..end].to_vec();
+
+        let s = ascii_buf.chunks(80)
+            .map(|line| std::str::from_utf8(line))
+            .collect::<Result<Vec<_>, _>>()?
+            .join("\n");
+
+        Ok(PyString::new(py, &s))
+    }
+}
+
+impl SegyFile{
+    fn open_segy(path: &str) -> PyResult<Self>{
+        // SAFETY:
+        // While SegyFile struct exists, the read file must not be modified.
+        //
+        // Modifying a file after it has been opened could lead to undefined behaviour. Therefore,
+        // it cannot change during lifetime of the struct
+
+        let file = File::open(path)?;
+        let mmap = unsafe {
+            MmapOptions::new().map(&file)?
+        };
+        let b_header = match parse_binary_header(&mmap[3200..3600]){
+            Ok(h) => h,
+            Err(e) => return Err(PyIOError::new_err(format!("Failed to open file: {}", e)))
+        };
+        let (trace_count, trace_index) = match Self::build_trace_index(&b_header, &mmap){
+            Ok((count, index)) => (count, index),
+            Err(e) => return Err(PyErr::new::<PyTypeError, _>(e)),
+        };
+
+        Ok(Self{b_header, trace_index, mmap, trace_count})
+    }
+
+    fn build_trace_index(b_header: &BinaryHeader, mmap: &Mmap) -> Result<(u64, Vec<u64>), std::io::Error> {
+        // Samples per trace read from binary header might not be correct for older data
+        // Hence it might(?) be necessary to walk through whole file and count traces manually
+        let mut trace_index: Vec<u64> = Vec::new();
+        let mut count: u64 = 0;
+        let mut offset = 3600 + b_header.extended_text_header_count as usize * 3200; //text header 3200, bin header 400
+
+        while offset + 240 < mmap.len(){
+            let samples_in_trace = read_i16(&mmap, offset+114, &b_header.byte_order);
+            let samples = if samples_in_trace == 0 {
+                b_header.samples_per_trace as u64
+            } else {
+                samples_in_trace as u64
+            };
+
+            let data_bytes = 240 + samples * b_header.bytes_per_sample as u64;
+            if offset + data_bytes as usize > mmap.len(){
+                break;
+            }
+
+            trace_index.push(offset as u64);
+            offset += data_bytes as usize;
+            count += 1;
+        }
+
+        Ok((count, trace_index))
+    }
+
+    fn get_trace_data(&self, trace_number: u32) -> Result<TraceData, SegyError> {
+        let byte_order: ByteOrder = self.b_header.byte_order;
+        let b_header = &self.b_header;
+        let trace_index = &self.trace_index;
+
+        if trace_number <= 0 {
+            return Err(SegyError::Io(std::io::Error::new(InvalidInput, "Trace number is 1-based. Values lower than 0 are not accepted")));
+        } else if trace_number > trace_index.len() as u32 {
+            return Err(SegyError::TraceOutOfRange {
+                requested: trace_number,
+                trace_count: self.trace_index.len(),
+            });
+        }
+
+        let target = trace_number - 1;
+
+        let trace_start = if (target as usize)  < trace_index.len() {
+            trace_index[target as usize]
+        }else{
+            return Err(SegyError::TraceOutOfRange {requested: trace_number, trace_count: trace_index.len()})
+        };
+
+        let header: &[u8] = &self.mmap[trace_start as usize .. trace_start as usize + 240];
+        let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
+
+        let samples = if samples_in_trace == 0 {
+            b_header.samples_per_trace as u64
+        } else {
+            samples_in_trace as u64
+        };
+
+        let data_bytes = samples * b_header.bytes_per_sample as u64;
+        let data_start = trace_start as usize + 240;
+        let raw_buf = &self.mmap[data_start .. data_start + data_bytes as usize];
+
+        let trace: TraceData = match b_header.data_format {
+            DataFormat::IBMf32 => decode_ibm_trace(&raw_buf, &byte_order),
+            DataFormat::IEEf32 => decode_ieef32_trace(&raw_buf, &byte_order),
+            DataFormat::I8 => decode_i8_trace(&raw_buf),
+            DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
+            DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
+            DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
+        };
+
+        Ok(trace)
+    }
+}
+
+fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
     let byte_order = &buf[96..100];
     let byte_order: ByteOrder = match byte_order {
         [0x01, 0x02, 0x03, 0x04] => ByteOrder::BigEndian,
@@ -219,43 +294,6 @@ fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
         ByteOrder::LittleEndian => i16::from_le_bytes(bytes),
         ByteOrder::SwappedWord => i16::from_be_bytes([bytes[1], bytes[0]]),
     }
-}
-
-fn build_trace_index(b_header: &BinaryHeader, path: &str) -> Result<(u64, Vec<u64>), std::io::Error> {
-    // Samples per trace read from binary header might not be correct for older data
-    // Hence it might(?) be necessary to walk through whole file and count traces manually
-
-    let mut trace_index: Vec<u64> = Vec::new();
-    let mut file = File::open(path)?;
-    let start: u64 = 3600 + b_header.extended_text_header_count as u64 * 3200;
-
-    file.seek(SeekFrom::Start(start))?;
-    let mut count: u64 = 0;
-
-    loop {
-        let mut header = [0u8; 240];
-        let trace_start = file.stream_position()?;
-        match file.read_exact(&mut header) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(e) => return Err(e),
-        }
-
-        trace_index.push(trace_start);
-        let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
-
-        let samples = if samples_in_trace == 0 {
-            b_header.samples_per_trace as u64
-        } else {
-            samples_in_trace as u64
-        };
-
-        let data_bytes = samples * b_header.bytes_per_sample as u64;
-        file.seek(SeekFrom::Current(data_bytes as i64))?;
-        count += 1;
-    }
-
-    Ok((count, trace_index))
 }
 
 fn ibmf32_from_be(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
@@ -336,53 +374,6 @@ fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::I32(traces)
 }
 
-fn get_trace_data(path: &str, b_header: &BinaryHeader, trace_number: u32, trace_index: &[u64]) -> Result<TraceData, SegyError> {
-    let mut file = File::open(path)?;
-    let byte_order: ByteOrder = b_header.byte_order;
-
-    if trace_number <= 0 {
-        return Err(SegyError::Io(std::io::Error::new(InvalidData, "Trace number is 1-based. Values lower than 0 are not accepted")));
-    }
-    let target = trace_number - 1;
-
-    let trace_start = if (target as usize)  < trace_index.len() {
-        trace_index[target as usize]
-    }else{
-        return Err(SegyError::TraceOutOfRange {requested: trace_number, trace_count: trace_index.len()})
-    };
-
-    file.seek(SeekFrom::Start(trace_start))?;
-    let mut header = [0u8; 240];
-
-    match file.read_exact(&mut header) {
-        Ok(_) => {},
-        Err(e) => return Err(SegyError::from(e)),
-    }
-
-    let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
-
-    let samples = if samples_in_trace == 0 {
-        b_header.samples_per_trace as u64
-    } else {
-        samples_in_trace as u64
-    };
-
-    let data_bytes = samples * b_header.bytes_per_sample as u64;
-    let mut raw_buf = vec![0u8; data_bytes as usize];
-    file.read_exact(&mut raw_buf)?;
-
-    let trace: TraceData = match b_header.data_format {
-        DataFormat::IBMf32 => decode_ibm_trace(&raw_buf, &byte_order),
-        DataFormat::IEEf32 => decode_ieef32_trace(&raw_buf, &byte_order),
-        DataFormat::I8 => decode_i8_trace(&raw_buf),
-        DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
-        DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
-        DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
-    };
-
-    Ok(trace)
-}
-
 enum TraceData{
     F32(Vec<f32>),
     I16(Vec<i16>),
@@ -402,5 +393,20 @@ pub enum SegyError {
 impl From<std::io::Error> for SegyError {
     fn from(e: std::io::Error) -> Self {
         SegyError::Io(e)
+    }
+}
+
+impl Display for SegyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let result = match self {
+            SegyError::Io(e) => e.to_string(),
+            SegyError::TraceOutOfRange { requested, trace_count} => {
+                String::from(format!("Trace out of range. Requested {} trace, ot ouf {} traces", requested, trace_count))
+            },
+            SegyError::UnsupportedDataFormat => String::from("Unsupported data format"),
+            SegyError::CorruptTrace => String::from("Corrupt trace segment"),
+            SegyError::ParseFailure => String::from("Failed to parse data"),
+        };
+        write!(f, "{:?}", result)
     }
 }
