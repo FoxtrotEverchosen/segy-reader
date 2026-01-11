@@ -33,7 +33,7 @@ struct BinaryHeader{
     byte_order: ByteOrder
 }
 
-// Only handles data formats compatible with standard <= Rev1
+// Only handles data formats compatible with Revision standard <= 1
 #[derive(Debug)]
 enum DataFormat{
     IBMf32,         // Code: 1      bytes: 4
@@ -167,7 +167,7 @@ impl SegyFile {
         // In All Revision standards: textual header is 3200 bytes, padded with:
         // - 0x40 (EBCDIC space) for EBCDIC encoding
         // - 0x20 (ASCII space) for ASCII encoding
-        // Check last byte to determine encoding
+        // This implementation checks last byte to determine encoding
         // This should work every time, as it is extremely unlikely for a textual header to fill all 3200 bytes
         let is_ebcdic = data[3199] == 0x40;
         let mut ascii_buf = if is_ebcdic {
@@ -196,10 +196,15 @@ impl SegyFile {
 impl SegyFile{
     fn open_segy(path: &str) -> PyResult<Self>{
         // SAFETY:
-        // While SegyFile struct exists, the read file must not be modified.
+        // As per memmap2 documentation All file-backed memory map constructors are marked unsafe
+        // because of the potential for Undefined Behavior (UB) using the map if the underlying file
+        // is subsequently modified, in or out of process.
         //
-        // Modifying a file after it has been opened could lead to undefined behaviour. Therefore,
-        // it cannot change during lifetime of the struct
+        // User modifying a file after it has been opened could lead to undefined behaviour.
+        // Therefore, it cannot change during lifetime of the struct.
+        //
+        // It is the caller's responsibility to ensure the file remains stable and unmodified
+        // during the lifetime of this `SegyFile`.
 
         let file = File::open(path)?;
         let mmap = unsafe {
@@ -348,7 +353,8 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         [0x04, 0x03, 0x02, 0x01] => ByteOrder::LittleEndian,
         [0x02, 0x01, 0x04, 0x03] => ByteOrder::SwappedWord,
 
-        // SEG-Y rev0 assumes BigEndian only
+        // Older SEG-Y files, following Revision 0 standard encode numbers BigEndian only, therefore
+        // those files would most likely have this four bytes filled with 0
         [0x00, 0x00, 0x00, 0x00] => ByteOrder::BigEndian,
         _ => {
             return Err(SegyError::UnsupportedDataFormat);
@@ -397,8 +403,8 @@ fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
 }
 
 fn ibmf32_from_be(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
-    // ibmf32 -> 1 sign bit, 7 exponent bits, 24 mantissa bits
-    // unlike IEEE754 uses base 16 exponent (IEEE uses base 2)
+    // IBMf32 -> 1 sign bit, 7 exponent bits, 24 mantissa bits
+    // unlike IEEE754, IBM 32-bit float uses base 16 exponent
     let word = match byte_order {
         ByteOrder::BigEndian => u32::from_be_bytes(bytes),
         ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
@@ -416,14 +422,6 @@ fn ibmf32_from_be(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
     sign * mantissa * 16f32.powi(exponent - 64)
 }
 
-fn decode_ibm_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
-    let trace_data = data
-        .chunks_exact(4)
-        .map(|b| ibmf32_from_be([b[0], b[1], b[2], b[3]], byte_order))
-        .collect();
-
-    TraceData::F32(trace_data)
-}
 
 fn ieef32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32 {
     let bits = match byte_order {
@@ -435,10 +433,26 @@ fn ieef32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32 {
     f32::from_bits(bits)
 }
 
+enum TraceData{
+    F32(Vec<f32>),
+    I16(Vec<i16>),
+    I32(Vec<i32>),
+    I8(Vec<i8>),
+}
+
 fn decode_ieef32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     let trace_data = data
         .chunks_exact(4)
         .map(|b| ieef32_from_order([b[0], b[1], b[2], b[3]], byte_order))
+        .collect();
+
+    TraceData::F32(trace_data)
+}
+
+fn decode_ibm_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+    let trace_data = data
+        .chunks_exact(4)
+        .map(|b| ibmf32_from_be([b[0], b[1], b[2], b[3]], byte_order))
         .collect();
 
     TraceData::F32(trace_data)
@@ -472,13 +486,6 @@ fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
         .collect();
 
     TraceData::I32(traces)
-}
-
-enum TraceData{
-    F32(Vec<f32>),
-    I16(Vec<i16>),
-    I32(Vec<i32>),
-    I8(Vec<i8>),
 }
 
 #[derive(Debug)]
