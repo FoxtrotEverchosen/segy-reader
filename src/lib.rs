@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
 use pyo3::exceptions::{PyIOError, PyTypeError};
 use pyo3::types::{PyString, PyDict};
-use numpy::{IntoPyArray};
+use numpy::{IntoPyArray, PyArray2};
 use memmap2::{MmapOptions, Mmap};
 
 #[pymodule]
@@ -75,9 +75,61 @@ impl SegyFile {
         trace_to_numpy(py, trace)
     }
 
-    fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        // TODO: Function should be called on loading file in GUI as it generates index necessary for reading traces
+    fn get_trace_range<'py>(
+        &self,
+        py: Python<'py>,
+        start: u32,
+        end: u32,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let traces = self
+            .get_trace_range_data(start, end)
+            .map_err(|e| PyTypeError::new_err(e.to_string()))?;
 
+        if traces.is_empty() {
+            return Err(PyTypeError::new_err("Got empty array"));
+        }
+
+        match &traces[0] {
+            TraceData::F32(_) => {
+                let vec2: Vec<Vec<f32>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::F32(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            }
+            TraceData::I16(_) => {
+                let vec2: Vec<Vec<i16>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::I16(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            }
+            TraceData::I32(_) => {
+                let vec2: Vec<Vec<i32>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::I32(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            }
+            TraceData::I8(_) => {
+                let vec2: Vec<Vec<i8>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::I8(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            }
+        }
+    }
+
+    fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let b_header: &BinaryHeader = &self.b_header;
 
         let dict = PyDict::new(py);
@@ -199,7 +251,10 @@ impl SegyFile{
         let trace_index = &self.trace_index;
 
         if trace_number <= 0 {
-            return Err(SegyError::Io(std::io::Error::new(InvalidInput, "Trace number is 1-based. Values lower than 0 are not accepted")));
+            return Err(SegyError::Io(std::io::Error::new(
+                InvalidInput,
+                "Trace number is 1-based. Values lower than 0 are not accepted"
+            )));
         } else if trace_number > trace_index.len() as u32 {
             return Err(SegyError::TraceOutOfRange {
                 requested: trace_number,
@@ -208,12 +263,7 @@ impl SegyFile{
         }
 
         let target = trace_number - 1;
-
-        let trace_start = if (target as usize)  < trace_index.len() {
-            trace_index[target as usize]
-        }else{
-            return Err(SegyError::TraceOutOfRange {requested: trace_number, trace_count: trace_index.len()})
-        };
+        let trace_start = trace_index[target as usize];
 
         let header: &[u8] = &self.mmap[trace_start as usize .. trace_start as usize + 240];
         let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
@@ -238,6 +288,56 @@ impl SegyFile{
         };
 
         Ok(trace)
+    }
+
+    fn get_trace_range_data(&self, start: u32, end: u32) -> Result<Vec<TraceData>, SegyError>{
+        let byte_order: ByteOrder = self.b_header.byte_order;
+        let b_header = &self.b_header;
+        let trace_index = &self.trace_index;
+        let mut data: Vec<TraceData> = Vec::with_capacity((end - start + 1) as usize);
+
+        if start >= end {
+            return Err(SegyError::Io(std::io::Error::new(
+                InvalidInput,
+                "Staring index must be lower that ending index"
+            )))
+        }
+
+        if start <= 0 || end > trace_index.len() as u32 {
+            return Err(SegyError::InvalidTraceRange {
+                start,
+                end,
+                trace_count: self.trace_index.len(),
+            });
+        }
+
+        for target in (start - 1) as usize ..end as usize{
+            let trace_start = trace_index[target];
+            let header: &[u8] = &self.mmap[trace_start as usize .. trace_start as usize + 240];
+            let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
+
+            let samples = if samples_in_trace == 0 {
+                b_header.samples_per_trace as u64
+            } else {
+                samples_in_trace as u64
+            };
+
+            let data_bytes = samples * b_header.bytes_per_sample as u64;
+            let data_start = trace_start as usize + 240;
+            let raw_buf = &self.mmap[data_start .. data_start + data_bytes as usize];
+
+            let trace: TraceData = match b_header.data_format {
+                DataFormat::IBMf32 => decode_ibm_trace(&raw_buf, &byte_order),
+                DataFormat::IEEf32 => decode_ieef32_trace(&raw_buf, &byte_order),
+                DataFormat::I8 => decode_i8_trace(&raw_buf),
+                DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
+                DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
+                DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
+            };
+            data.push(trace);
+        }
+
+        Ok(data)
     }
 }
 
@@ -385,6 +485,7 @@ enum TraceData{
 pub enum SegyError {
     Io(std::io::Error),
     TraceOutOfRange { requested: u32, trace_count: usize },
+    InvalidTraceRange {start: u32, end: u32, trace_count: usize},
     UnsupportedDataFormat,
     CorruptTrace,
     ParseFailure,
@@ -402,6 +503,9 @@ impl Display for SegyError {
             SegyError::Io(e) => e.to_string(),
             SegyError::TraceOutOfRange { requested, trace_count} => {
                 String::from(format!("Trace out of range. Requested {} trace, ot ouf {} traces", requested, trace_count))
+            },
+            SegyError::InvalidTraceRange { start, end, trace_count} => {
+                String::from(format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)"))
             },
             SegyError::UnsupportedDataFormat => String::from("Unsupported data format"),
             SegyError::CorruptTrace => String::from("Corrupt trace segment"),

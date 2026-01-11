@@ -12,3 +12,4 @@ pyo3 = { version = "0.27.2", features = ["extension-module"] }
 ebcdic = "0.1.2"
 numpy = "0.27.1"
 memmap2 = "0.9.9"
+log = "0.4.29"

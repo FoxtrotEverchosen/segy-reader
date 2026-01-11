@@ -6,9 +6,11 @@ path = r"C:/fastsegy/Kerry3D.segy"
 seg_file = fastsegy.SegyFile(path)
 nth_trace = 3500
 data = seg_file.get_trace(nth_trace)
+data_range = seg_file.get_trace_range(nth_trace-2, nth_trace)
 
 with np.printoptions(threshold=100):
     print(data)
+
 print(f"Shape fastsegy: {data.shape}")
 print(f"Data type: {data.dtype}")
 
@@ -34,3 +36,9 @@ min_difference = np.min(difference)
 print(f"Max value from fastsegy: {np.max(data)}, Min value from fastsegy: {np.min(data)}")
 print(f"Max value from segyio: {np.max(trace)}, Min value from segyio: {np.min(trace)}")
 print(f"Difference: {avg_difference}, max: {max_difference}, min: {min_difference}, mse: {mse}")
+
+
+with np.printoptions(threshold=200):
+    print(data_range)
+
+print(data_range.shape)
