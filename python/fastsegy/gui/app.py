@@ -14,12 +14,13 @@ from PyQt6.QtWidgets import (
     QDialog,
     QPushButton,
     QAbstractItemView,
-    QFileDialog
+    QFileDialog, QLineEdit, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt
 from pathlib import Path
 
 from fastsegy import SegyFile
+from fastsegy.gui.plotting import PlotCanvas
 
 
 class FunctionWindow(QDialog):
@@ -50,6 +51,7 @@ class App(QMainWindow):
         self.canvas = None
         self.segy_file = None
         self.metadata = None
+        self.trace_data = None
         self.setWindowTitle("FastSegy App")
         self.setMinimumSize(1000, 700)
         self.create_menu()
@@ -68,8 +70,14 @@ class App(QMainWindow):
         edit_menu = QMenu("Edit", self)
         menubar.addMenu(edit_menu)
 
-        edit_menu.addAction("Preferences", lambda: print(self.segy_file.get_trace(3500)))
+        edit_menu.addAction("Preferences")
         edit_menu.addAction("Clear Canvas")
+
+        data_menu = QMenu("Data", self)
+        menubar.addMenu(data_menu)
+
+        data_menu.addAction("Get Trace", self.trace_dialog)
+        data_menu.addAction("Get Trace Range", self.trace_range_dialog)
 
     def open_file_dialog(self):
         home_dir = str(Path.home())
@@ -82,6 +90,96 @@ class App(QMainWindow):
 
     def drop_file(self):
         self.segy_file = None
+        self.metadata = None
+        self.trace_data = None
+
+        placeholder_data = [
+            ("Samples Per Trace", "—"),
+            ("Bytes Per Sample", "—"),
+            ("Data Format", "—"),
+            ("Byte Order", "—"),
+            ("Trace Count", "—"),
+        ]
+
+        for row, (key, value) in enumerate(placeholder_data):
+            self.data_table.setItem(row, 0, QTableWidgetItem(key))
+            self.data_table.setItem(row, 1, QTableWidgetItem(value))
+
+        self.canvas.clear_plot()
+
+    def trace_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select a trace to be shown")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout(dialog)
+        num_label = QLabel("Trace number")
+        num_edit = QLineEdit()
+        layout.addWidget(num_label)
+        layout.addWidget(num_edit)
+
+        buttons_layout = QHBoxLayout()
+        ok_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, dialog)
+        cancel_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, dialog)
+
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(ok_btn)
+        buttons_layout.addWidget(cancel_btn)
+
+        layout.addLayout(buttons_layout)
+        cancel_btn.clicked.connect(lambda: dialog.close())
+
+        ok_btn.accepted.connect(dialog.accept)
+        if dialog.exec() == 1:
+            if self.segy_file is None:
+                return
+
+            value = int(num_edit.text())
+            self.trace_data = self.segy_file.get_trace(value)
+            self.canvas.plot_trace(self.trace_data)
+
+
+    def trace_range_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select a trace range to be shown")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout(dialog)
+        start_label = QLabel("Starting trace (1-based)")
+        start_edit = QLineEdit()
+
+        end_label = QLabel("Ending trace (1-based)")
+        end_edit = QLineEdit()
+
+        layout.addWidget(start_label)
+        layout.addWidget(start_edit)
+        layout.addWidget(end_label)
+        layout.addWidget(end_edit)
+
+        buttons_layout = QHBoxLayout()
+        ok_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, dialog)
+        cancel_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, dialog)
+
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(ok_btn)
+        buttons_layout.addWidget(cancel_btn)
+
+        layout.addLayout(buttons_layout)
+        cancel_btn.clicked.connect(lambda: dialog.close())
+
+        ok_btn.accepted.connect(dialog.accept)
+        if dialog.exec() == 1:
+            if self.segy_file is None:
+                return
+
+            start = int(start_edit.text())
+            end = int(end_edit.text())
+
+            if end - start > 1000:
+                return
+
+            self.trace_data = self.segy_file.get_trace_range(start, end)
+            self.canvas.plot_section(self.trace_data)
 
     def populate_details(self, metadata):
         rows = self.data_table.rowCount()
@@ -102,18 +200,7 @@ class App(QMainWindow):
         main_layout = QHBoxLayout()
         central_widget.setLayout(main_layout)
 
-        self.canvas = QLabel("Canvas for drawing SEG-Y data")
-        self.canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.canvas.setStyleSheet(
-            """
-            QLabel {
-                border: 2px solid black;
-                background-color: white;
-                font-size: 16px;
-            }
-            """
-        )
-
+        self.canvas = PlotCanvas()
         main_layout.addWidget(self.canvas, stretch=3)
 
         right_panel = QVBoxLayout()
