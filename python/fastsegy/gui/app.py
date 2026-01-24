@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QPushButton,
     QAbstractItemView,
+    QMessageBox,
     QFileDialog, QLineEdit, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt
@@ -105,7 +106,9 @@ class App(QMainWindow):
             self.data_table.setItem(row, 0, QTableWidgetItem(key))
             self.data_table.setItem(row, 1, QTableWidgetItem(value))
 
-        self.canvas.clear_plot()
+        if self.canvas is not None:
+            self.canvas.clear_plot()
+            self.canvas = None
 
     def trace_dialog(self):
         dialog = QDialog(self)
@@ -132,12 +135,15 @@ class App(QMainWindow):
         ok_btn.accepted.connect(dialog.accept)
         if dialog.exec() == 1:
             if self.segy_file is None:
+                self.show_warning("To request a trace data a file must be first loaded!")
                 return
 
-            value = int(num_edit.text())
-            self.trace_data = self.segy_file.get_trace(value)
-            self.canvas.plot_trace(self.trace_data)
-
+            try:
+                value = int(num_edit.text())
+                self.trace_data = self.segy_file.get_trace(value)
+                self.canvas.plot_trace(self.trace_data)
+            except Exception as e:
+                self.show_error(str(e))
 
     def trace_range_dialog(self):
         dialog = QDialog(self)
@@ -170,16 +176,21 @@ class App(QMainWindow):
         ok_btn.accepted.connect(dialog.accept)
         if dialog.exec() == 1:
             if self.segy_file is None:
+                self.show_warning("To request a trace range data a file must be first loaded!")
                 return
 
-            start = int(start_edit.text())
-            end = int(end_edit.text())
+            try:
+                start = int(start_edit.text())
+                end = int(end_edit.text())
 
-            if end - start > 1000:
-                return
+                if end - start > 1500:
+                    self.show_warning("Due to memory limitations, a user can request up to 1500 traces!")
+                    return
 
-            self.trace_data = self.segy_file.get_trace_range(start, end)
-            self.canvas.plot_section(self.trace_data)
+                self.trace_data = self.segy_file.get_trace_range(start, end)
+                self.canvas.plot_section(self.trace_data)
+            except Exception as e:
+                self.show_error(str(e))
 
     def populate_details(self, metadata):
         rows = self.data_table.rowCount()
@@ -283,6 +294,12 @@ class App(QMainWindow):
         function_name = item.text()
         popup = FunctionWindow(function_name)
         popup.exec()
+
+    def show_error(self, message):
+        QMessageBox.critical(self, "FastSegy Error", message)
+
+    def show_warning(self, message):
+        QMessageBox.warning(self, "FastSegy Warning", message)
 
 
 def main():
