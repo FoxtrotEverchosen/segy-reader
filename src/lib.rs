@@ -133,30 +133,29 @@ impl SegyFile {
         let b_header: &BinaryHeader = &self.b_header;
 
         let dict = PyDict::new(py);
-        dict.set_item("sample_interval", b_header.sample_interval)?;
-        dict.set_item("samples_per_trace", b_header.samples_per_trace)?;
-        dict.set_item("bytes_per_sample", b_header.bytes_per_sample)?;
-        dict.set_item("extended_text_header_count", b_header.extended_text_header_count)?;
+        dict.set_item("Sample Interval", b_header.sample_interval)?;
+        dict.set_item("Samples Per Trace", b_header.samples_per_trace)?;
+        dict.set_item("Bytes Per Sample", b_header.bytes_per_sample)?;
+        dict.set_item("Extended Text Header Count", b_header.extended_text_header_count)?;
 
         let data_format = match b_header.data_format {
             DataFormat::IBMf32 => "IBMf32",
             DataFormat::I32 => "I32",
             DataFormat::I16 => "I16",
-            DataFormat::FixedPointWGain => "FixedPointWGain",
+            DataFormat::FixedPointWGain => "Fixed Point With Gain",
             DataFormat::IEEf32 => "IEEf32",
             DataFormat::I8 => "I8",
         };
-        dict.set_item("data_format", data_format)?;
+        dict.set_item("Data Format", data_format)?;
 
         let byte_order = match b_header.byte_order {
-            ByteOrder::BigEndian => "BigEndian",
-            ByteOrder::LittleEndian => "LittleEndian",
-            ByteOrder::SwappedWord => "SwappedWord",
+            ByteOrder::BigEndian => "Big Endian",
+            ByteOrder::LittleEndian => "Little Endian",
+            ByteOrder::SwappedWord => "Swapped Word",
         };
-        dict.set_item("byte_order", byte_order)?;
-        dict.set_item("traces", &self.trace_count)?;
-        dict.set_item("index", &self.trace_index)?;
-        dict.set_item("trace_count", &self.trace_count)?;
+        dict.set_item("Byte Order", byte_order)?;
+        dict.set_item("Index", &self.trace_index)?;
+        dict.set_item("Trace Count", &self.trace_count)?;
 
         Ok(dict)
     }
@@ -364,6 +363,8 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
     let sample_interval = read_i16(buf, 16, &byte_order);
     let data_format = read_i16(buf, 24, &byte_order);
     let samples_per_trace = read_i16(buf, 20, &byte_order);
+
+    // TODO: Look into bytes 3521, 3529, 3513 for additional useful data
     let extended_text_header_count = read_i16(buf, 304, &byte_order);
 
     let bytes_per_sample: i16 = match data_format{

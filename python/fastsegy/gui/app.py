@@ -48,11 +48,12 @@ class App(QMainWindow):
         self.functions_table = None
         self.data_table = None
         self.canvas = None
+        self.segy_file = None
+        self.metadata = None
         self.setWindowTitle("FastSegy App")
         self.setMinimumSize(1000, 700)
         self.create_menu()
         self.create_layout()
-        self.segy_file = None
 
     def create_menu(self):
         menubar = QMenuBar(self)
@@ -73,11 +74,26 @@ class App(QMainWindow):
     def open_file_dialog(self):
         home_dir = str(Path.home())
         path = QFileDialog.getOpenFileName(self, 'Open file', home_dir, filter="SEG-Y files (*.seg *.segy)")[0]
-        self.segy_file = SegyFile(path)
-        print(self.segy_file.get_trace(3500))
+
+        if path:
+            self.segy_file = SegyFile(path)
+            self.metadata = self.segy_file.get_metadata()
+            self.populate_details(self.metadata)
 
     def drop_file(self):
         self.segy_file = None
+
+    def populate_details(self, metadata):
+        rows = self.data_table.rowCount()
+
+        for i in range(rows):
+            key_type = self.data_table.item(i, 0)
+            if key_type is None:
+                break
+            key_text = key_type.text()
+
+            value = self.metadata.get(key_text, "Undefined")
+            self.data_table.setItem(i, 1, QTableWidgetItem(str(value)))
 
     def create_layout(self):
         central_widget = QWidget()
@@ -120,15 +136,11 @@ class App(QMainWindow):
         table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
 
         placeholder_data = [
-            ("Sample Rate", "—"),
+            ("Samples Per Trace", "—"),
+            ("Bytes Per Sample", "—"),
+            ("Data Format", "—"),
+            ("Byte Order", "—"),
             ("Trace Count", "—"),
-            ("Format", "—"),
-            ("Sample Rate2", "—"),
-            ("Trace Count", "—"),
-            ("Format", "—"),
-            ("Sample Rate2", "—"),
-            ("Trace Count", "—"),
-            ("Format", "—"),
         ]
 
         for row, (key, value) in enumerate(placeholder_data):

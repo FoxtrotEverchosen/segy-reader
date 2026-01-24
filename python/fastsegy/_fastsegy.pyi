@@ -1,5 +1,6 @@
 import numpy as np
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
 
 class SegyFile:
     def __init__(self, path: str) -> None: ...
