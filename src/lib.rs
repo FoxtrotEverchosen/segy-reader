@@ -295,10 +295,7 @@ impl SegyFile{
     }
 
     fn get_trace_range_data(&self, start: u32, end: u32) -> Result<Vec<TraceData>, SegyError>{
-        let byte_order: ByteOrder = self.b_header.byte_order;
-        let b_header = &self.b_header;
         let trace_index = &self.trace_index;
-        let mut data: Vec<TraceData> = Vec::with_capacity((end - start + 1) as usize);
 
         if start >= end {
             return Err(SegyError::Io(std::io::Error::new(
@@ -314,6 +311,10 @@ impl SegyFile{
                 trace_count: self.trace_index.len(),
             });
         }
+
+        let byte_order: ByteOrder = self.b_header.byte_order;
+        let b_header = &self.b_header;
+        let mut data: Vec<TraceData> = Vec::with_capacity((end - start + 1) as usize);
 
         for target in (start - 1) as usize ..end as usize{
             let trace_start = trace_index[target];
