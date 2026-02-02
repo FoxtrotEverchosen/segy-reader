@@ -2,9 +2,9 @@ import matplotlib
 import numpy as np
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.figure import Figure
 matplotlib.use("QtAgg")
-
 
 class PlotCanvas(QWidget):
     def __init__(self, parent=None):
@@ -25,24 +25,27 @@ class PlotCanvas(QWidget):
 
         self._line = None
         self.cbar = None
+        self.cmap = "seismic"
 
-    def plot_trace(self, trace: np.ndarray):
+    def plot_trace(self, sample_interval: float, trace: np.ndarray):
         if self.cbar:
             self.cbar.remove()
             self.cbar = None
 
+        # sample_interval [us] -> [s]
+        sample_interval = sample_interval / 1e6
         self.ax.clear()
-        x = np.arange(len(trace))
+        x = np.arange(0, len(trace) * sample_interval, sample_interval)
         self.ax.plot(x, trace, linewidth=0.8)
 
         self.ax.set_title("Trace View")
-        self.ax.set_xlabel("Sample Index")
-        self.ax.set_ylabel("Amplitude")
+        self.ax.set_xlabel("Time [s]")
+        self.ax.set_ylabel("Amplitude [-]")
 
         self.ax.grid(True, alpha=0.3)
         self.canvas.draw_idle()
 
-    def plot_section(self, section: np.ndarray):
+    def plot_section(self, sample_interval: float, start_trace_index: int, section: np.ndarray):
         if self.cbar:
             self.cbar.remove()
 
@@ -51,23 +54,34 @@ class PlotCanvas(QWidget):
         # Transpose so samples go down, traces go across
         data = section.T
 
+        n_samples = data.shape[0]
+        n_traces = data.shape[1]
+        total_time = n_samples * sample_interval / 1e6
+        x_start = start_trace_index
+        x_end = start_trace_index + n_traces
+
         vmax = np.percentile(np.abs(data), 98)
         vmin = -vmax
 
         self._image = self.ax.imshow(
             data,
             aspect="auto",
-            cmap="seismic",
+            cmap=self.cmap,
             vmin=vmin,
             vmax=vmax,
-            origin="upper"
+            origin="upper",
+            extent=(x_start, x_end, total_time, 0)
         )
 
         self.ax.set_title("Seismic Section")
         self.ax.set_xlabel("Trace Number")
-        self.ax.set_ylabel("Sample Index")
+        self.ax.set_ylabel("Time [s]")
 
-        self.cbar = self.figure.colorbar(self._image, ax=self.ax, shrink=0.8)
+        divider = make_axes_locatable(self.ax)
+        cax = divider.append_axes("right", size="3%", pad=0.35)
+
+        self.cbar = self.figure.colorbar(self._image, cax=cax)
+        self.cbar.set_label("Amplitude [-]", loc="center")
         self.canvas.draw_idle()
 
     def clear_plot(self):

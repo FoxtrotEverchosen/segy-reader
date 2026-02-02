@@ -68,11 +68,11 @@ class App(QMainWindow):
         file_menu.addAction("Open SEG-Y", self.open_file_dialog)
         file_menu.addAction("Close SEG-Y file", self.drop_file)
 
-        edit_menu = QMenu("Edit", self)
-        menubar.addMenu(edit_menu)
-
-        edit_menu.addAction("Preferences")
-        edit_menu.addAction("Clear Canvas")
+        # edit_menu = QMenu("Edit", self)
+        # menubar.addMenu(edit_menu)
+        #
+        # edit_menu.addAction("Preferences")
+        # edit_menu.addAction("Clear Canvas")
 
         data_menu = QMenu("Data", self)
         menubar.addMenu(data_menu)
@@ -87,7 +87,7 @@ class App(QMainWindow):
         if path:
             self.segy_file = SegyFile(path)
             self.metadata = self.segy_file.get_metadata()
-            self.populate_details(self.metadata)
+            self.populate_data_table(self.metadata)
 
     def drop_file(self):
         self.segy_file = None
@@ -100,6 +100,7 @@ class App(QMainWindow):
             ("Data Format", "—"),
             ("Byte Order", "—"),
             ("Trace Count", "—"),
+            ("Sample Interval", "—"),
         ]
 
         for row, (key, value) in enumerate(placeholder_data):
@@ -108,7 +109,6 @@ class App(QMainWindow):
 
         if self.canvas is not None:
             self.canvas.clear_plot()
-            self.canvas = None
 
     def trace_dialog(self):
         dialog = QDialog(self)
@@ -141,7 +141,8 @@ class App(QMainWindow):
             try:
                 value = int(num_edit.text())
                 self.trace_data = self.segy_file.get_trace(value)
-                self.canvas.plot_trace(self.trace_data)
+                sample_interval = float(self.metadata.get("Sample Interval"))
+                self.canvas.plot_trace(sample_interval, self.trace_data)
             except Exception as e:
                 self.show_error(str(e))
 
@@ -188,11 +189,12 @@ class App(QMainWindow):
                     return
 
                 self.trace_data = self.segy_file.get_trace_range(start, end)
-                self.canvas.plot_section(self.trace_data)
+                sample_interval = float(self.metadata.get("Sample Interval"))
+                self.canvas.plot_section(sample_interval, start, self.trace_data)
             except Exception as e:
                 self.show_error(str(e))
 
-    def populate_details(self, metadata):
+    def populate_data_table(self, metadata):
         rows = self.data_table.rowCount()
 
         for i in range(rows):
@@ -239,6 +241,7 @@ class App(QMainWindow):
             ("Data Format", "—"),
             ("Byte Order", "—"),
             ("Trace Count", "—"),
+            ("Sample Interval", "—"),
         ]
 
         for row, (key, value) in enumerate(placeholder_data):
