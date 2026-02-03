@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QAbstractItemView,
     QMessageBox,
-    QFileDialog, QLineEdit, QDialogButtonBox
+    QFileDialog, QLineEdit, QDialogButtonBox, QTextEdit
 )
 from PyQt6.QtCore import Qt
 from pathlib import Path
@@ -49,6 +49,37 @@ class FunctionWindow(QDialog):
 
         layout.addWidget(label)
         layout.addWidget(close_button)
+
+        self.setLayout(layout)
+
+
+class TextHeaderWindow(QDialog):
+    def __init__(self, header_text: str, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("SEG-Y Textual Header")
+        self.setMinimumSize(600, 400)
+
+        layout = QVBoxLayout()
+
+        self.text_view = QTextEdit()
+        self.text_view.setReadOnly(True)
+        self.text_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.text_view.setText(header_text)
+
+        layout.addWidget(self.text_view)
+
+        button_layout = QHBoxLayout()
+        close_button = QPushButton("Close")
+        close_button.setFixedWidth(120)
+
+        close_button.clicked.connect(self.close)
+
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+        button_layout.addStretch()
+
+        layout.addLayout(button_layout)
 
         self.setLayout(layout)
 
@@ -97,6 +128,7 @@ class App(QMainWindow):
 
         data_menu.addAction("Get Trace", self.trace_dialog)
         data_menu.addAction("Get Trace Range", self.trace_range_dialog)
+        data_menu.addAction("Get Textual Header", self.get_text_header)
 
     def open_file_dialog(self):
         home_dir = str(Path.home())
@@ -331,6 +363,15 @@ class App(QMainWindow):
             except Exception as e:
                 self.show_error("Encountered error while transforming data, processed has not finished,"
                                 f" data remained unchanged. Error message: \n {e}")
+
+    def get_text_header(self):
+        if self.segy_file is None:
+            self.show_warning("No file loaded!")
+            return
+
+        header_text = self.segy_file.get_header()
+        dlg = TextHeaderWindow(header_text, self)
+        dlg.exec()
 
     def show_error(self, message):
         QMessageBox.critical(self, "FastSegy Error", message)
