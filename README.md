@@ -1,5 +1,5 @@
 **The main branch contains the most up-to-date stable version of the program. It supports SEG-Y files
-following the Revision 0 and Revision 1 standards. Other branches may contain upgrades regarding performance, 
+following the Revision-0 and Revision-1 standards. Other branches may contain upgrades regarding performance, 
 file standards or customization.**
 
 ## Fastsegy
@@ -15,7 +15,7 @@ and memory mapping which carries some overhead in more abstracted languages. The
 
 - Reads SEG-Y textual headers encoded as ASCII or EBDCIC  
 - Parses binary header to extract key metadata  
-- handles decoding of data encoded in different formats (IEE754, IBM-float32, signed int etc.)
+- Handles decoding of data encoded in different formats (IEE754, IBM-float32, signed int etc.)
 - Exposes python bindings via PyO3 for easy integration with Python frontend
 - Utilizes memory mapping for performance gains while reading trace data 
 - Supports SEG-Y Rev 0 and Rev 1 files
@@ -62,9 +62,9 @@ Make sure you have the following installed:
 
 Create a virtual environment and install the following python libraries:
 - Maturin
-- matplotlib
-- numpy
-- scipy
+- Matplotlib
+- Numpy
+- Scipy
 - PyQt6
 
 To build the Rust library, you will have to run the following command from the project root directory:
