@@ -45,14 +45,11 @@ class PlotCanvas(QWidget):
         self.ax.grid(True, alpha=0.3)
         self.canvas.draw_idle()
 
-    def plot_section(self, sample_interval: float, start_trace_index: int, section: np.ndarray):
+    def plot_section(self, sample_interval: float, start_trace_index: int, data: np.ndarray):
         if self.cbar:
             self.cbar.remove()
 
         self.ax.clear()
-
-        # Transpose so samples go down, traces go across
-        data = section.T
 
         n_samples = data.shape[0]
         n_traces = data.shape[1]

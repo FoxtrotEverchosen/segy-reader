@@ -1,4 +1,5 @@
 import sys
+import numpy as np
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -22,6 +23,14 @@ from pathlib import Path
 
 from fastsegy import SegyFile
 from fastsegy.gui.plotting import PlotCanvas
+
+from fastsegy.gui.function_dialogs import (
+    ProfileFlipWindow,
+    RunningAverageWindow,
+    MedianXYFilterWindow
+)
+
+from fastsegy.processing import *
 
 
 class FunctionWindow(QDialog):
@@ -53,10 +62,19 @@ class App(QMainWindow):
         self.segy_file = None
         self.metadata = None
         self.trace_data = None
+        self.sample_interval = None
+        self.trace_data_shape = None
+        self.trace_data_range = None
         self.setWindowTitle("FastSegy App")
         self.setMinimumSize(1000, 700)
         self.create_menu()
         self.create_layout()
+
+        self.function_map = {
+            "Flip Profile": (ProfileFlipWindow, profile_flip),
+            "Running Average": (RunningAverageWindow, running_average),
+            "Median XY-Filter": (MedianXYFilterWindow, median_xy_filter),
+        }
 
     def create_menu(self):
         menubar = QMenuBar(self)
@@ -88,6 +106,7 @@ class App(QMainWindow):
             self.segy_file = SegyFile(path)
             self.metadata = self.segy_file.get_metadata()
             self.populate_data_table(self.metadata)
+            self.sample_interval = float(self.metadata.get("Sample Interval"))
 
     def drop_file(self):
         self.segy_file = None
@@ -141,8 +160,9 @@ class App(QMainWindow):
             try:
                 value = int(num_edit.text())
                 self.trace_data = self.segy_file.get_trace(value)
-                sample_interval = float(self.metadata.get("Sample Interval"))
-                self.canvas.plot_trace(sample_interval, self.trace_data)
+                self.trace_data_shape = np.shape(self.trace_data)
+                self.trace_data_range = None
+                self.canvas.plot_trace(self.sample_interval, self.trace_data)
             except Exception as e:
                 self.show_error(str(e))
 
@@ -188,9 +208,11 @@ class App(QMainWindow):
                     self.show_warning("Due to memory limitations, a user can request up to 1500 traces!")
                     return
 
-                self.trace_data = self.segy_file.get_trace_range(start, end)
-                sample_interval = float(self.metadata.get("Sample Interval"))
-                self.canvas.plot_section(sample_interval, start, self.trace_data)
+                # Transpose data for better visualisation
+                self.trace_data = self.segy_file.get_trace_range(start, end).T
+                self.trace_data_shape = np.shape(self.trace_data)
+                self.trace_data_range = (start, end)
+                self.canvas.plot_section(self.sample_interval, start, self.trace_data)
             except Exception as e:
                 self.show_error(str(e))
 
@@ -255,8 +277,8 @@ class App(QMainWindow):
 
         table.horizontalHeader().setStretchLastSection(True)
         table.verticalHeader().setVisible(False)
-
         table.setStyleSheet("QTableWidget { border: 2px solid black; }")
+
         return table
 
     def create_functions_table(self):
@@ -267,9 +289,9 @@ class App(QMainWindow):
         table.setHorizontalHeaderLabels(["Functions"])
 
         functions = [
-            "Gain Control",
-            "Bandpass Filter",
-            "Normalize Traces",
+            "Flip Profile",
+            "Running Average",
+            "Median XY-Filter",
         ]
 
         for row, name in enumerate(functions):
@@ -282,21 +304,33 @@ class App(QMainWindow):
 
         table.horizontalHeader().setStretchLastSection(True)
         table.verticalHeader().setVisible(False)
-
         table.cellClicked.connect(self.open_function_window)
-
         table.setStyleSheet("QTableWidget { border: 2px solid black; }")
 
         return table
 
     def open_function_window(self, row):
+        if self.trace_data is None:
+            self.show_warning("Load or request data before applying functions.")
+            return
+
         item = self.functions_table.item(row, 0)
         if not item:
             return
 
-        function_name = item.text()
-        popup = FunctionWindow(function_name)
-        popup.exec()
+        name = item.text()
+        dialog, transformation = self.function_map.get(name)
+        dialog = dialog(self)
+
+        if dialog.exec():
+            params = dialog.get_params()
+
+            try:
+                self.trace_data = transformation(params, self.trace_data, self.sample_interval)
+                self.canvas.plot_section(self.sample_interval, self.trace_data_range[0], self.trace_data)
+            except Exception as e:
+                self.show_error("Encountered error while transforming data, processed has not finished,"
+                                f" data remained unchanged. Error message: \n {e}")
 
     def show_error(self, message):
         QMessageBox.critical(self, "FastSegy Error", message)
