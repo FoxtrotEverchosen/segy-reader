@@ -5,7 +5,7 @@ file standards or customization.**
 ## Fastsegy
 
 Performant SEG-Y reader with Python bindings.  
-Enables access to metadata, trace headers, trace data, and trace ranges from SEG-Y files used in seismic and geophysical measurements (e.g., GPR). Combines Rust for fast parsing with Python for easy integration and GUI development.
+Enables access to metadata, trace headers, trace data, and trace ranges from SEG-Y files used in seismic and geophysical measurements. Combines Rust for fast parsing with Python for easy integration and GUI development.
 
 ## Features
 ### Rust Library
