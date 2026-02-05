@@ -13,7 +13,7 @@ The library to parse the seismic data was created in Rust. While Rust was chosen
 Rust code, the project does benefit from its speed. Especially since the parsing process utilizes loops, data decoding 
 and memory mapping which carries some overhead in more abstracted languages. The most important features of this library:
 
-- Reads SEG-Y textual headers encoded as ASCII or EBDCIC  
+- Reads SEG-Y textual headers encoded as ASCII or EBCDIC  
 - Parses binary header to extract key metadata  
 - Handles decoding of data encoded in different formats (IEE754, IBM-float32, signed int etc.)
 - Exposes python bindings via PyO3 for easy integration with Python frontend
