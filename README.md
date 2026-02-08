@@ -56,7 +56,7 @@ For the time being, you have to install all python libraries and Rust tools manu
 
 Make sure you have the following installed:
 
-- Python 3.9 or newer
+- Python 3.10 or newer
 - [Rust toolchain](https://www.rust-lang.org/tools/install)
 - pip
 
