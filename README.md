@@ -73,7 +73,7 @@ To build the Rust library, you will have to run the following command from the p
 
 This will build the library and allow Python to use the bindings.
 
-Make sure your virtual environment is activated before running maturin develop.
+Make sure your virtual environment is activated before running `maturin develop`.
 On Linux, you may need to install build tools:
 
 `sudo apt install python3-dev build-essential`
