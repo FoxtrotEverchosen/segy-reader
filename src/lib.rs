@@ -14,13 +14,11 @@ fn _fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-fn trace_to_numpy(py: Python, trace: TraceData) -> PyResult<Bound<PyAny>> {
-    Ok(match trace {
-        TraceData::F32(v) => v.into_pyarray(py).into_any(),
-        TraceData::I16(v) => v.into_pyarray(py).into_any(),
-        TraceData::I32(v) => v.into_pyarray(py).into_any(),
-        TraceData::I8(v) => v.into_pyarray(py).into_any(),
-    })
+enum TraceData{
+    F32(Vec<f32>),
+    I16(Vec<i16>),
+    I32(Vec<i32>),
+    I8(Vec<i8>),
 }
 
 #[derive(Debug)]
@@ -44,11 +42,68 @@ enum DataFormat{
     I8,             // 8            1
 }
 
+impl DataFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DataFormat::IBMf32 => "IBMf32",
+            DataFormat::I32 => "I32",
+            DataFormat::I16 => "I16",
+            DataFormat::FixedPointWGain => "Fixed Point With Gain",
+            DataFormat::IEEf32 => "IEEf32",
+            DataFormat::I8 => "I8",
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 enum ByteOrder{
     BigEndian,
     LittleEndian,
     SwappedWord,
+}
+
+impl ByteOrder {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ByteOrder::BigEndian => "Big Endian",
+            ByteOrder::LittleEndian => "Little Endian",
+            ByteOrder::SwappedWord => "Swapped Word",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum SegyError {
+    Io(std::io::Error),
+    TraceOutOfRange { requested: u32, trace_count: usize },
+    InvalidTraceRange {start: u32, end: u32, trace_count: usize},
+    UnsupportedDataFormat,
+    CorruptTrace,
+    ParseFailure,
+}
+
+impl From<std::io::Error> for SegyError {
+    fn from(e: std::io::Error) -> Self {
+        SegyError::Io(e)
+    }
+}
+
+impl Display for SegyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let result = match self {
+            SegyError::Io(e) => e.to_string(),
+            SegyError::TraceOutOfRange { requested, trace_count} => {
+                String::from(format!("Trace out of range. Requested {} trace, ot ouf {} traces", requested, trace_count))
+            },
+            SegyError::InvalidTraceRange { start, end, trace_count} => {
+                String::from(format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)"))
+            },
+            SegyError::UnsupportedDataFormat => String::from("Unsupported data format"),
+            SegyError::CorruptTrace => String::from("Corrupt trace segment"),
+            SegyError::ParseFailure => String::from("Failed to parse data"),
+        };
+        write!(f, "{:?}", result)
+    }
 }
 
 #[pyclass]
@@ -131,29 +186,14 @@ impl SegyFile {
 
     fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let b_header: &BinaryHeader = &self.b_header;
-
         let dict = PyDict::new(py);
+
         dict.set_item("Sample Interval", b_header.sample_interval)?;
         dict.set_item("Samples Per Trace", b_header.samples_per_trace)?;
         dict.set_item("Bytes Per Sample", b_header.bytes_per_sample)?;
         dict.set_item("Extended Text Header Count", b_header.extended_text_header_count)?;
-
-        let data_format = match b_header.data_format {
-            DataFormat::IBMf32 => "IBMf32",
-            DataFormat::I32 => "I32",
-            DataFormat::I16 => "I16",
-            DataFormat::FixedPointWGain => "Fixed Point With Gain",
-            DataFormat::IEEf32 => "IEEf32",
-            DataFormat::I8 => "I8",
-        };
-        dict.set_item("Data Format", data_format)?;
-
-        let byte_order = match b_header.byte_order {
-            ByteOrder::BigEndian => "Big Endian",
-            ByteOrder::LittleEndian => "Little Endian",
-            ByteOrder::SwappedWord => "Swapped Word",
-        };
-        dict.set_item("Byte Order", byte_order)?;
+        dict.set_item("Data Format", b_header.data_format.as_str())?;
+        dict.set_item("Byte Order", b_header.byte_order.as_str())?;
         dict.set_item("Index", &self.trace_index)?;
         dict.set_item("Trace Count", &self.trace_count)?;
 
@@ -344,6 +384,15 @@ impl SegyFile{
     }
 }
 
+fn trace_to_numpy(py: Python, trace: TraceData) -> PyResult<Bound<PyAny>> {
+    Ok(match trace {
+        TraceData::F32(v) => v.into_pyarray(py).into_any(),
+        TraceData::I16(v) => v.into_pyarray(py).into_any(),
+        TraceData::I32(v) => v.into_pyarray(py).into_any(),
+        TraceData::I8(v) => v.into_pyarray(py).into_any(),
+    })
+}
+
 fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
     let byte_order = &buf[96..100];
     let byte_order: ByteOrder = match byte_order {
@@ -422,7 +471,6 @@ fn ibmf32_from_be(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
     sign * mantissa * 16f32.powi(exponent - 64)
 }
 
-
 fn ieef32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32 {
     let bits = match byte_order {
         ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
@@ -431,13 +479,6 @@ fn ieef32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32 {
     };
 
     f32::from_bits(bits)
-}
-
-enum TraceData{
-    F32(Vec<f32>),
-    I16(Vec<i16>),
-    I32(Vec<i32>),
-    I8(Vec<i8>),
 }
 
 fn decode_ieef32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
@@ -486,38 +527,4 @@ fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
         .collect();
 
     TraceData::I32(traces)
-}
-
-#[derive(Debug)]
-pub enum SegyError {
-    Io(std::io::Error),
-    TraceOutOfRange { requested: u32, trace_count: usize },
-    InvalidTraceRange {start: u32, end: u32, trace_count: usize},
-    UnsupportedDataFormat,
-    CorruptTrace,
-    ParseFailure,
-}
-
-impl From<std::io::Error> for SegyError {
-    fn from(e: std::io::Error) -> Self {
-        SegyError::Io(e)
-    }
-}
-
-impl Display for SegyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let result = match self {
-            SegyError::Io(e) => e.to_string(),
-            SegyError::TraceOutOfRange { requested, trace_count} => {
-                format!("Trace out of range. Requested {} trace, ot ouf {} traces", requested, trace_count)
-            },
-            SegyError::InvalidTraceRange { start, end, trace_count} => {
-                format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)")
-            },
-            SegyError::UnsupportedDataFormat => String::from("Unsupported data format"),
-            SegyError::CorruptTrace => String::from("Corrupt trace segment"),
-            SegyError::ParseFailure => String::from("Failed to parse data"),
-        };
-        write!(f, "{:?}", result)
-    }
 }
