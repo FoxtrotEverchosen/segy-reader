@@ -254,7 +254,7 @@ impl SegyFile{
         let b_header = &self.b_header;
         let trace_index = &self.trace_index;
 
-        if trace_number <= 0 {
+        if trace_number == 0 {
             return Err(SegyError::Io(std::io::Error::new(
                 InvalidInput,
                 "Trace number is 1-based. Values lower than 0 are not accepted"
@@ -281,15 +281,7 @@ impl SegyFile{
         let data_bytes = samples * b_header.bytes_per_sample as u64;
         let data_start = trace_start as usize + 240;
         let raw_buf = &self.mmap[data_start .. data_start + data_bytes as usize];
-
-        let trace: TraceData = match b_header.data_format {
-            DataFormat::IBMf32 => decode_ibm_trace(&raw_buf, &byte_order),
-            DataFormat::IEEf32 => decode_ieef32_trace(&raw_buf, &byte_order),
-            DataFormat::I8 => decode_i8_trace(&raw_buf),
-            DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
-            DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
-            DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
-        };
+        let trace: TraceData = Self::decode_trace(&b_header, &byte_order, &raw_buf)?;
 
         Ok(trace)
     }
@@ -304,7 +296,7 @@ impl SegyFile{
             )))
         }
 
-        if start <= 0 || end > trace_index.len() as u32 {
+        if start == 0 || end > trace_index.len() as u32 {
             return Err(SegyError::InvalidTraceRange {
                 start,
                 end,
@@ -331,18 +323,24 @@ impl SegyFile{
             let data_start = trace_start as usize + 240;
             let raw_buf = &self.mmap[data_start .. data_start + data_bytes as usize];
 
-            let trace: TraceData = match b_header.data_format {
-                DataFormat::IBMf32 => decode_ibm_trace(&raw_buf, &byte_order),
-                DataFormat::IEEf32 => decode_ieef32_trace(&raw_buf, &byte_order),
-                DataFormat::I8 => decode_i8_trace(&raw_buf),
-                DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
-                DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
-                DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
-            };
+            let trace: TraceData = Self::decode_trace(&b_header, &byte_order, &raw_buf)?;
             data.push(trace);
         }
 
         Ok(data)
+    }
+
+    fn decode_trace(b_header: &BinaryHeader, byte_order: &ByteOrder, raw_buf: &[u8]) -> Result<TraceData, SegyError> {
+        let trace = match b_header.data_format {
+            DataFormat::IBMf32 => decode_ibm_trace(&raw_buf, &byte_order),
+            DataFormat::IEEf32 => decode_ieef32_trace(&raw_buf, &byte_order),
+            DataFormat::I8 => decode_i8_trace(&raw_buf),
+            DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
+            DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
+            DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
+        };
+
+        Ok(trace)
     }
 }
 
@@ -511,10 +509,10 @@ impl Display for SegyError {
         let result = match self {
             SegyError::Io(e) => e.to_string(),
             SegyError::TraceOutOfRange { requested, trace_count} => {
-                String::from(format!("Trace out of range. Requested {} trace, ot ouf {} traces", requested, trace_count))
+                format!("Trace out of range. Requested {} trace, ot ouf {} traces", requested, trace_count)
             },
             SegyError::InvalidTraceRange { start, end, trace_count} => {
-                String::from(format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)"))
+                format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)")
             },
             SegyError::UnsupportedDataFormat => String::from("Unsupported data format"),
             SegyError::CorruptTrace => String::from("Corrupt trace segment"),
