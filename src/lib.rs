@@ -39,7 +39,15 @@ enum DataFormat{
     I16,            // 3            2
     FixedPointWGain,// 4            4
     IEEf32,         // 5            4
+    IEEf64,         // 6            8
+    I24,            // 7            3
     I8,             // 8            1
+    I64,            // 9            8
+    U32,            // 10           4
+    U16,            // 11           2
+    U64,            // 12           8
+    U24,            // 15           3
+    U8,             // 16           1
 }
 
 impl DataFormat {
@@ -50,7 +58,15 @@ impl DataFormat {
             DataFormat::I16 => "I16",
             DataFormat::FixedPointWGain => "Fixed Point With Gain",
             DataFormat::IEEf32 => "IEEf32",
+            DataFormat::IEEf64 => "IEEf64",
+            DataFormat::I24 => "I24",
             DataFormat::I8 => "I8",
+            DataFormat::I64 => "I64",
+            DataFormat::U32 => "U32",
+            DataFormat::U16 => "U16",
+            DataFormat::U64 => "U64",
+            DataFormat::U24 => "U24",
+            DataFormat::U8 => "U8",
         }
     }
 }
@@ -378,6 +394,7 @@ impl SegyFile{
             DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
             DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
             DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
+            _ => return Err(SegyError::UnsupportedDataFormat),
         };
 
         Ok(trace)
@@ -412,13 +429,15 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
     let data_format = read_i16(buf, 24, &byte_order);
     let samples_per_trace = read_i16(buf, 20, &byte_order);
 
-    // TODO: Look into bytes 3521, 3529, 3513 for additional useful data
+    // TODO: Look into bytes 3521, 3529, 3513, 3509 for additional useful data
     let extended_text_header_count = read_i16(buf, 304, &byte_order);
 
     let bytes_per_sample: i16 = match data_format{
-        1 | 2 | 4 | 5 => 4,
-        3 => 2,
-        8 => 1,
+        8 | 16 => 1,
+        3 | 11 => 2,
+        7 | 15 => 3,
+        1 | 2 | 4 | 5 | 10 => 4,
+        6 | 9 | 12 => 8,
         _ => return Err(SegyError::UnsupportedDataFormat)
     };
 
