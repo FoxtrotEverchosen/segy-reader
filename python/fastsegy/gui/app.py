@@ -236,10 +236,6 @@ class App(QMainWindow):
                 start = int(start_edit.text())
                 end = int(end_edit.text())
 
-                if end - start > 1500:
-                    self.show_warning("Due to memory limitations, a user can request up to 1500 traces!")
-                    return
-
                 # Transpose data for better visualisation
                 self.trace_data = self.segy_file.get_trace_range(start, end).T
                 self.trace_data_shape = np.shape(self.trace_data)
