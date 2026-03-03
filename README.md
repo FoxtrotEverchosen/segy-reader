@@ -38,6 +38,8 @@ Current improvement plans include:
 
 - Improvements to file initialization  
 - Handling of newer Revision standards (i.e. 2 and possibly 2.1) 
+- Custom seismic binary container
+- Rendering optimizations (current Matplotlib bottleneck)
 - More customizable GUI
 - Improvements to UX
 - More processing functionalities
