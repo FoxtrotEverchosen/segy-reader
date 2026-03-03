@@ -16,9 +16,17 @@ fn _fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 enum TraceData{
     F32(Vec<f32>),
+    F64(Vec<f64>),
     I16(Vec<i16>),
+    I24(Vec<i32>),
     I32(Vec<i32>),
+    I64(Vec<i64>),
     I8(Vec<i8>),
+    U8(Vec<u8>),
+    U16(Vec<u16>),
+    U24(Vec<u32>),
+    U32(Vec<u32>),
+    U64(Vec<u64>),
 }
 
 #[derive(Debug)]
@@ -37,7 +45,7 @@ enum DataFormat{
     IBMf32,         // Code: 1      bytes: 4
     I32,            // 2            4
     I16,            // 3            2
-    FixedPointWGain,// 4            4
+    FixedPointWGain,// 4            4           (Obsolete)
     IEEf32,         // 5            4
     IEEf64,         // 6            8
     I24,            // 7            3
@@ -93,6 +101,7 @@ pub enum SegyError {
     Io(std::io::Error),
     TraceOutOfRange { requested: u32, trace_count: usize },
     InvalidTraceRange {start: u32, end: u32, trace_count: usize},
+    DecodingError(String),
     UnsupportedDataFormat,
     CorruptTrace,
     ParseFailure,
@@ -117,6 +126,7 @@ impl Display for SegyError {
             SegyError::UnsupportedDataFormat => String::from("Unsupported data format"),
             SegyError::CorruptTrace => String::from("Corrupt trace segment"),
             SegyError::ParseFailure => String::from("Failed to parse data"),
+            SegyError::DecodingError(e) => format!("Decoding error: {}", e),
         };
         write!(f, "{:?}", result)
     }
@@ -161,33 +171,6 @@ impl SegyFile {
         }
 
         match &traces[0] {
-            TraceData::F32(_) => {
-                let vec2: Vec<Vec<f32>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::F32(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            }
-            TraceData::I16(_) => {
-                let vec2: Vec<Vec<i16>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::I16(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            }
-            TraceData::I32(_) => {
-                let vec2: Vec<Vec<i32>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::I32(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            }
             TraceData::I8(_) => {
                 let vec2: Vec<Vec<i8>> = traces
                     .into_iter()
@@ -196,7 +179,105 @@ impl SegyFile {
                 let array = PyArray2::from_vec2(py, &vec2)
                     .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
                 Ok(array.into_any())
-            }
+            },
+            TraceData::I16(_) => {
+                let vec2: Vec<Vec<i16>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::I16(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
+            TraceData::I24(_) => {
+                let vec2: Vec<Vec<i32>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::I24(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
+            TraceData::I32(_) => {
+                let vec2: Vec<Vec<i32>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::I32(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
+            TraceData::I64(_) => {
+                let vec2: Vec<Vec<i64>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::I64(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },TraceData::U8(_) => {
+                let vec2: Vec<Vec<u8>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::U8(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
+            TraceData::U16(_) => {
+                let vec2: Vec<Vec<u16>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::U16(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
+            TraceData::U24(_) => {
+                let vec2: Vec<Vec<u32>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::U24(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
+            TraceData::U32(_) => {
+                let vec2: Vec<Vec<u32>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::U32(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
+            TraceData::U64(_) => {
+                let vec2: Vec<Vec<u64>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::U64(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
+            TraceData::F32(_) => {
+                let vec2: Vec<Vec<f32>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::F32(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
+            TraceData::F64(_) => {
+                let vec2: Vec<Vec<f64>> = traces
+                    .into_iter()
+                    .map(|t| if let TraceData::F64(v) = t { v } else { unreachable!() })
+                    .collect();
+                let array = PyArray2::from_vec2(py, &vec2)
+                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
+                Ok(array.into_any())
+            },
         }
     }
 
@@ -211,7 +292,7 @@ impl SegyFile {
         dict.set_item("Data Format", b_header.data_format.as_str())?;
         dict.set_item("Byte Order", b_header.byte_order.as_str())?;
         dict.set_item("Index", &self.trace_index)?;
-        dict.set_item("Trace Count", &self.trace_count)?;
+        dict.set_item("Trace Count", self.trace_count)?;
 
         Ok(dict)
     }
@@ -390,11 +471,18 @@ impl SegyFile{
         let trace = match b_header.data_format {
             DataFormat::IBMf32 => decode_ibm_trace(&raw_buf, &byte_order),
             DataFormat::IEEf32 => decode_ieef32_trace(&raw_buf, &byte_order),
+            DataFormat::IEEf64 => decode_ieef64_trace(&raw_buf, &byte_order),
             DataFormat::I8 => decode_i8_trace(&raw_buf),
             DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
+            DataFormat::I24 => decode_i24_trace(&raw_buf, &byte_order)?,
             DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
+            DataFormat::I64 => decode_i64_trace(&raw_buf, &byte_order),
+            DataFormat::U8 => decode_u8_trace(&raw_buf),
+            DataFormat::U16 => decode_u16_trace(&raw_buf, &byte_order),
+            DataFormat::U24 => decode_u24_trace(&raw_buf, &byte_order)?,
+            DataFormat::U32 => decode_u32_trace(&raw_buf, &byte_order),
+            DataFormat::U64 => decode_u64_trace(&raw_buf, &byte_order),
             DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
-            _ => return Err(SegyError::UnsupportedDataFormat),
         };
 
         Ok(trace)
@@ -404,9 +492,17 @@ impl SegyFile{
 fn trace_to_numpy(py: Python, trace: TraceData) -> PyResult<Bound<PyAny>> {
     Ok(match trace {
         TraceData::F32(v) => v.into_pyarray(py).into_any(),
-        TraceData::I16(v) => v.into_pyarray(py).into_any(),
-        TraceData::I32(v) => v.into_pyarray(py).into_any(),
+        TraceData::F64(v) => v.into_pyarray(py).into_any(),
         TraceData::I8(v) => v.into_pyarray(py).into_any(),
+        TraceData::I16(v) => v.into_pyarray(py).into_any(),
+        TraceData::I24(v) => v.into_pyarray(py).into_any(),
+        TraceData::I32(v) => v.into_pyarray(py).into_any(),
+        TraceData::I64(v) => v.into_pyarray(py).into_any(),
+        TraceData::U8(v) => v.into_pyarray(py).into_any(),
+        TraceData::U16(v) => v.into_pyarray(py).into_any(),
+        TraceData::U24(v) => v.into_pyarray(py).into_any(),
+        TraceData::U32(v) => v.into_pyarray(py).into_any(),
+        TraceData::U64(v) => v.into_pyarray(py).into_any(),
     })
 }
 
@@ -447,7 +543,15 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         3 => DataFormat::I16,
         4 => DataFormat::FixedPointWGain,
         5 => DataFormat::IEEf32,
+        6 => DataFormat::IEEf64,
+        7 => DataFormat::I24,
         8 => DataFormat::I8,
+        9 => DataFormat::I64,
+        10 => DataFormat::U32,
+        11 => DataFormat::U16,
+        12 => DataFormat::U64,
+        15 => DataFormat::U24,
+        16 => DataFormat::U8,
         _ => return Err(SegyError::UnsupportedDataFormat)
     };
 
@@ -470,7 +574,7 @@ fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
     }
 }
 
-fn ibmf32_from_be(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
+fn ibmf32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
     // IBMf32 -> 1 sign bit, 7 exponent bits, 24 mantissa bits
     // unlike IEEE754, IBM 32-bit float uses base 16 exponent
     let word = match byte_order {
@@ -496,7 +600,6 @@ fn ieef32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32 {
         ByteOrder::BigEndian => u32::from_be_bytes(bytes),
         ByteOrder::SwappedWord => u32::from_be_bytes([bytes[1], bytes[0], bytes[3], bytes[2]]),
     };
-
     f32::from_bits(bits)
 }
 
@@ -509,13 +612,38 @@ fn decode_ieef32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::F32(trace_data)
 }
 
+fn ieef64_from_order(bytes: [u8; 8], byte_order: &ByteOrder) -> f64 {
+    let bits = match byte_order {
+        ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
+        ByteOrder::BigEndian => u64::from_be_bytes(bytes),
+        ByteOrder::SwappedWord => u64::from_be_bytes([bytes[1], bytes[0], bytes[3], bytes[2], bytes[5], bytes[4], bytes[7], bytes[6]]),
+    };
+
+    f64::from_bits(bits)
+}
+
+fn decode_ieef64_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+    let trace_data = data
+        .chunks_exact(8)
+        .map(|b| ieef64_from_order([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]], byte_order))
+        .collect();
+
+    TraceData::F64(trace_data)
+}
+
 fn decode_ibm_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     let trace_data = data
         .chunks_exact(4)
-        .map(|b| ibmf32_from_be([b[0], b[1], b[2], b[3]], byte_order))
+        .map(|b| ibmf32_from_order([b[0], b[1], b[2], b[3]], byte_order))
         .collect();
 
     TraceData::F32(trace_data)
+}
+
+fn decode_u8_trace(data: &[u8]) -> TraceData {
+    let trace = data.iter().map(|&b| b).collect();
+
+    TraceData::U8(trace)
 }
 
 fn decode_i8_trace(data: &[u8]) -> TraceData {
@@ -523,6 +651,61 @@ fn decode_i8_trace(data: &[u8]) -> TraceData {
 
     TraceData::I8(trace)
 }
+
+fn decode_u16_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+    let traces = data.chunks_exact(2)
+        .map(|b| match byte_order {
+            ByteOrder::LittleEndian => u16::from_le_bytes([b[0], b[1]]),
+            ByteOrder::BigEndian => u16::from_be_bytes([b[0], b[1]]),
+            ByteOrder::SwappedWord => u16::from_be_bytes([b[1], b[0]]),
+        })
+        .collect();
+
+    TraceData::U16(traces)
+}
+
+fn decode_u24_trace(data: &[u8], byte_order: &ByteOrder) -> Result<TraceData, SegyError> {
+    let traces = data.chunks_exact(3)
+        .map(|b| match byte_order {
+            ByteOrder::LittleEndian => {
+                let sign = if b[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+                Ok(u32::from_le_bytes([b[0], b[1], b[2], sign]))
+            },
+            ByteOrder::BigEndian => {
+                let sign = if b[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+                Ok(u32::from_be_bytes([sign, b[0], b[1], b[2]]))
+            },
+            ByteOrder::SwappedWord => return Err(SegyError::DecodingError(String::from("Unsupported encoding: 3-byte swapped-word integer"))),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(TraceData::U24(traces))
+}
+
+fn decode_u32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+    let traces = data.chunks_exact(4)
+        .map(|b| match byte_order {
+            ByteOrder::LittleEndian => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            ByteOrder::BigEndian => u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
+            ByteOrder::SwappedWord => u32::from_be_bytes([b[1], b[0], b[3], b[2]]),
+        })
+        .collect();
+
+    TraceData::U32(traces)
+}
+
+fn decode_u64_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+    let traces = data.chunks_exact(8)
+        .map(|b| match byte_order {
+            ByteOrder::LittleEndian => u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            ByteOrder::BigEndian => u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            ByteOrder::SwappedWord => u64::from_be_bytes([b[1], b[0], b[3], b[2], b[5], b[4], b[7], b[6]]),
+        })
+        .collect();
+
+    TraceData::U64(traces)
+}
+
 
 fn decode_i16_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     let traces = data.chunks_exact(2)
@@ -536,6 +719,24 @@ fn decode_i16_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::I16(traces)
 }
 
+fn decode_i24_trace(data: &[u8], byte_order: &ByteOrder) -> Result<TraceData, SegyError> {
+    let traces = data.chunks_exact(3)
+        .map(|b| match byte_order {
+            ByteOrder::LittleEndian => {
+                let sign = if b[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+                Ok(i32::from_le_bytes([b[0], b[1], b[2], sign]))
+            },
+            ByteOrder::BigEndian => {
+                let sign = if b[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+                Ok(i32::from_be_bytes([sign, b[0], b[1], b[2]]))
+            },
+            ByteOrder::SwappedWord => return Err(SegyError::DecodingError(String::from("Unsupported encoding: 3-byte swapped-word integer"))),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(TraceData::I24(traces))
+}
+
 fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     let traces = data.chunks_exact(4)
         .map(|b| match byte_order {
@@ -546,4 +747,16 @@ fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
         .collect();
 
     TraceData::I32(traces)
+}
+
+fn decode_i64_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+    let traces = data.chunks_exact(8)
+        .map(|b| match byte_order {
+            ByteOrder::LittleEndian => i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            ByteOrder::BigEndian => i64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            ByteOrder::SwappedWord => i64::from_be_bytes([b[1], b[0], b[3], b[2], b[5], b[4], b[7], b[6]]),
+        })
+        .collect();
+
+    TraceData::I64(traces)
 }
