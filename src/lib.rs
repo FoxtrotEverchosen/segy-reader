@@ -118,10 +118,10 @@ impl Display for SegyError {
         let result = match self {
             SegyError::Io(e) => e.to_string(),
             SegyError::TraceOutOfRange { requested, trace_count} => {
-                String::from(format!("Trace out of range. Requested {} trace, ot ouf {} traces", requested, trace_count))
+                format!("Trace out of range. Requested {} trace, ot ouf {} traces", requested, trace_count)
             },
             SegyError::InvalidTraceRange { start, end, trace_count} => {
-                String::from(format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)"))
+                format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)")
             },
             SegyError::UnsupportedDataFormat => String::from("Unsupported data format"),
             SegyError::CorruptTrace => String::from("Corrupt trace segment"),
@@ -308,7 +308,7 @@ impl SegyFile {
         let is_ebcdic = data[3199] == 0x40;
         let mut ascii_buf = if is_ebcdic {
             let mut result = vec![0u8; 3200];
-            Ebcdic::ebcdic_to_ascii(&data, &mut result, data.len(), true, false);
+            Ebcdic::ebcdic_to_ascii(data, &mut result, data.len(), true, false);
             result
         } else {
             data.into()
@@ -366,7 +366,7 @@ impl SegyFile{
         let mut offset = 3600 + b_header.extended_text_header_count as usize * 3200; //text header 3200, bin header 400
 
         while offset + 240 < mmap.len(){
-            let samples_in_trace = read_i16(&mmap, offset+114, &b_header.byte_order);
+            let samples_in_trace = read_i16(mmap, offset+114, &b_header.byte_order);
             let samples = if samples_in_trace == 0 {
                 b_header.samples_per_trace as u64
             } else {
@@ -407,7 +407,7 @@ impl SegyFile{
         let trace_start = trace_index[target as usize];
 
         let header: &[u8] = &self.mmap[trace_start as usize .. trace_start as usize + 240];
-        let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
+        let samples_in_trace = read_i16(header, 114, &b_header.byte_order);
 
         let samples = if samples_in_trace == 0 {
             b_header.samples_per_trace as u64
@@ -418,7 +418,7 @@ impl SegyFile{
         let data_bytes = samples * b_header.bytes_per_sample as u64;
         let data_start = trace_start as usize + 240;
         let raw_buf = &self.mmap[data_start .. data_start + data_bytes as usize];
-        let trace: TraceData = Self::decode_trace(&b_header, &byte_order, &raw_buf)?;
+        let trace: TraceData = Self::decode_trace(b_header, &byte_order, raw_buf)?;
 
         Ok(trace)
     }
@@ -448,7 +448,7 @@ impl SegyFile{
         for target in (start - 1) as usize ..end as usize{
             let trace_start = trace_index[target];
             let header: &[u8] = &self.mmap[trace_start as usize .. trace_start as usize + 240];
-            let samples_in_trace = read_i16(&header, 114, &b_header.byte_order);
+            let samples_in_trace = read_i16(header, 114, &b_header.byte_order);
 
             let samples = if samples_in_trace == 0 {
                 b_header.samples_per_trace as u64
@@ -460,7 +460,7 @@ impl SegyFile{
             let data_start = trace_start as usize + 240;
             let raw_buf = &self.mmap[data_start .. data_start + data_bytes as usize];
 
-            let trace: TraceData = Self::decode_trace(&b_header, &byte_order, &raw_buf)?;
+            let trace: TraceData = Self::decode_trace(b_header, &byte_order, raw_buf)?;
             data.push(trace);
         }
 
@@ -469,19 +469,19 @@ impl SegyFile{
 
     fn decode_trace(b_header: &BinaryHeader, byte_order: &ByteOrder, raw_buf: &[u8]) -> Result<TraceData, SegyError> {
         let trace = match b_header.data_format {
-            DataFormat::IBMf32 => decode_ibm_trace(&raw_buf, &byte_order),
-            DataFormat::IEEf32 => decode_ieef32_trace(&raw_buf, &byte_order),
-            DataFormat::IEEf64 => decode_ieef64_trace(&raw_buf, &byte_order),
-            DataFormat::I8 => decode_i8_trace(&raw_buf),
-            DataFormat::I16 => decode_i16_trace(&raw_buf, &byte_order),
-            DataFormat::I24 => decode_i24_trace(&raw_buf, &byte_order)?,
-            DataFormat::I32 => decode_i32_trace(&raw_buf, &byte_order),
-            DataFormat::I64 => decode_i64_trace(&raw_buf, &byte_order),
-            DataFormat::U8 => decode_u8_trace(&raw_buf),
-            DataFormat::U16 => decode_u16_trace(&raw_buf, &byte_order),
-            DataFormat::U24 => decode_u24_trace(&raw_buf, &byte_order)?,
-            DataFormat::U32 => decode_u32_trace(&raw_buf, &byte_order),
-            DataFormat::U64 => decode_u64_trace(&raw_buf, &byte_order),
+            DataFormat::IBMf32 => decode_ibm_trace(raw_buf, byte_order),
+            DataFormat::IEEf32 => decode_ieef32_trace(raw_buf, byte_order),
+            DataFormat::IEEf64 => decode_ieef64_trace(raw_buf, byte_order),
+            DataFormat::I8 => decode_i8_trace(raw_buf),
+            DataFormat::I16 => decode_i16_trace(raw_buf, byte_order),
+            DataFormat::I24 => decode_i24_trace(raw_buf, byte_order)?,
+            DataFormat::I32 => decode_i32_trace(raw_buf, byte_order),
+            DataFormat::I64 => decode_i64_trace(raw_buf, byte_order),
+            DataFormat::U8 => decode_u8_trace(raw_buf),
+            DataFormat::U16 => decode_u16_trace(raw_buf, byte_order),
+            DataFormat::U24 => decode_u24_trace(raw_buf, byte_order)?,
+            DataFormat::U32 => decode_u32_trace(raw_buf, byte_order),
+            DataFormat::U64 => decode_u64_trace(raw_buf, byte_order),
             DataFormat::FixedPointWGain => return Err(SegyError::UnsupportedDataFormat),
         };
 
@@ -641,7 +641,7 @@ fn decode_ibm_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
 }
 
 fn decode_u8_trace(data: &[u8]) -> TraceData {
-    let trace = data.iter().map(|&b| b).collect();
+    let trace = data.to_vec();
 
     TraceData::U8(trace)
 }
@@ -675,7 +675,7 @@ fn decode_u24_trace(data: &[u8], byte_order: &ByteOrder) -> Result<TraceData, Se
                 let sign = if b[0] & 0x80 != 0 { 0xFF } else { 0x00 };
                 Ok(u32::from_be_bytes([sign, b[0], b[1], b[2]]))
             },
-            ByteOrder::SwappedWord => return Err(SegyError::DecodingError(String::from("Unsupported encoding: 3-byte swapped-word integer"))),
+            ByteOrder::SwappedWord => Err(SegyError::DecodingError(String::from("Unsupported encoding: 3-byte swapped-word integer"))),
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -730,7 +730,7 @@ fn decode_i24_trace(data: &[u8], byte_order: &ByteOrder) -> Result<TraceData, Se
                 let sign = if b[0] & 0x80 != 0 { 0xFF } else { 0x00 };
                 Ok(i32::from_be_bytes([sign, b[0], b[1], b[2]]))
             },
-            ByteOrder::SwappedWord => return Err(SegyError::DecodingError(String::from("Unsupported encoding: 3-byte swapped-word integer"))),
+            ByteOrder::SwappedWord => Err(SegyError::DecodingError(String::from("Unsupported encoding: 3-byte swapped-word integer"))),
         })
         .collect::<Result<Vec<_>, _>>()?;
 
