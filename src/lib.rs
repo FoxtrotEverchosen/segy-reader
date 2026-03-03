@@ -1,3 +1,4 @@
+use sysinfo::System;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::ErrorKind::{InvalidInput};
@@ -105,6 +106,7 @@ pub enum SegyError {
     UnsupportedDataFormat,
     CorruptTrace,
     ParseFailure,
+    RequestMemoryError,
 }
 
 impl From<std::io::Error> for SegyError {
@@ -127,6 +129,7 @@ impl Display for SegyError {
             SegyError::CorruptTrace => String::from("Corrupt trace segment"),
             SegyError::ParseFailure => String::from("Failed to parse data"),
             SegyError::DecodingError(e) => format!("Decoding error: {}", e),
+            SegyError::RequestMemoryError => String::from("Requested data exceeds your memory limit, try with smaller trace range."),
         };
         write!(f, "{:?}", result)
     }
@@ -425,6 +428,9 @@ impl SegyFile{
 
     fn get_trace_range_data(&self, start: u32, end: u32) -> Result<Vec<TraceData>, SegyError>{
         let trace_index = &self.trace_index;
+        let b_header = &self.b_header;
+        let mut sys = System::new();
+        sys.refresh_memory();
 
         if start >= end {
             return Err(SegyError::Io(std::io::Error::new(
@@ -441,8 +447,22 @@ impl SegyFile{
             });
         }
 
+        // Since data request can fetch for unlimited range of traces, it is necessary to limit how much memory can be used
+        // The max will be decided based on available memory. If it is lower than 512MB that arbitrary limit will be used instead.
+        let available_mem = sys.available_memory();
+        //12,5%
+        let soft_cap = available_mem / 8;
+        let floor = 512 * 1024 * 1024;
+        let mem_cap = soft_cap.max(floor);
+        let samples_per_trace = b_header.samples_per_trace as u64;
+        let bytes_per_sample = b_header.bytes_per_sample as u64;
+
+        let total_bytes = (end - start + 1) as u64 * samples_per_trace * bytes_per_sample;
+        if total_bytes > mem_cap {
+            return Err(SegyError::RequestMemoryError);
+        }
+
         let byte_order: ByteOrder = self.b_header.byte_order;
-        let b_header = &self.b_header;
         let mut data: Vec<TraceData> = Vec::with_capacity((end - start + 1) as usize);
 
         for target in (start - 1) as usize ..end as usize{
@@ -451,7 +471,7 @@ impl SegyFile{
             let samples_in_trace = read_i16(header, 114, &b_header.byte_order);
 
             let samples = if samples_in_trace == 0 {
-                b_header.samples_per_trace as u64
+                samples_per_trace
             } else {
                 samples_in_trace as u64
             };
