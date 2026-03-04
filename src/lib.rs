@@ -120,7 +120,7 @@ impl Display for SegyError {
         let result = match self {
             SegyError::Io(e) => e.to_string(),
             SegyError::TraceOutOfRange { requested, trace_count} => {
-                format!("Trace out of range. Requested {} trace, ot ouf {} traces", requested, trace_count)
+                format!("Trace out of range. Requested {} trace, out of {} traces", requested, trace_count)
             },
             SegyError::InvalidTraceRange { start, end, trace_count} => {
                 format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)")
@@ -131,7 +131,7 @@ impl Display for SegyError {
             SegyError::DecodingError(e) => format!("Decoding error: {}", e),
             SegyError::RequestMemoryError => String::from("Requested data exceeds your memory limit, try with smaller trace range."),
         };
-        write!(f, "{:?}", result)
+        write!(f, "{}", result)
     }
 }
 
@@ -285,7 +285,7 @@ impl SegyFile {
     }
 
     fn get_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let b_header: &BinaryHeader = &self.b_header;
+        let b_header = &self.b_header;
         let dict = PyDict::new(py);
 
         dict.set_item("Sample Interval", b_header.sample_interval)?;
@@ -355,13 +355,13 @@ impl SegyFile{
         };
         let (trace_count, trace_index) = match Self::build_trace_index(&b_header, &mmap){
             Ok((count, index)) => (count, index),
-            Err(e) => return Err(PyErr::new::<PyTypeError, _>(e)),
+            Err(e) => return Err(PyIOError::new_err(format!("Failed to construct trace index: {}", e))),
         };
 
         Ok(Self{b_header, trace_index, mmap, trace_count})
     }
 
-    fn build_trace_index(b_header: &BinaryHeader, mmap: &Mmap) -> Result<(u64, Vec<u64>), std::io::Error> {
+    fn build_trace_index(b_header: &BinaryHeader, mmap: &Mmap) -> Result<(u64, Vec<u64>), SegyError> {
         // Samples per trace read from binary header might not be correct for older data
         // Hence it might(?) be necessary to walk through whole file and count traces manually
         let mut trace_index: Vec<u64> = Vec::new();
@@ -370,7 +370,7 @@ impl SegyFile{
 
         while offset + 240 < mmap.len(){
             let samples_in_trace = read_i16(mmap, offset+114, &b_header.byte_order);
-            let samples = if samples_in_trace == 0 {
+            let samples = if samples_in_trace <= 0 {
                 b_header.samples_per_trace as u64
             } else {
                 samples_in_trace as u64
@@ -397,7 +397,7 @@ impl SegyFile{
         if trace_number == 0 {
             return Err(SegyError::Io(std::io::Error::new(
                 InvalidInput,
-                "Trace number is 1-based. Values lower than 0 are not accepted"
+                "Trace number is 1-based. 0 is not valid"
             )));
         } else if trace_number > trace_index.len() as u32 {
             return Err(SegyError::TraceOutOfRange {
@@ -412,7 +412,7 @@ impl SegyFile{
         let header: &[u8] = &self.mmap[trace_start as usize .. trace_start as usize + 240];
         let samples_in_trace = read_i16(header, 114, &b_header.byte_order);
 
-        let samples = if samples_in_trace == 0 {
+        let samples = if samples_in_trace <= 0 {
             b_header.samples_per_trace as u64
         } else {
             samples_in_trace as u64
@@ -435,7 +435,7 @@ impl SegyFile{
         if start >= end {
             return Err(SegyError::Io(std::io::Error::new(
                 InvalidInput,
-                "Staring index must be lower that ending index"
+                "Starting index must be lower than ending index"
             )))
         }
 
@@ -688,12 +688,10 @@ fn decode_u24_trace(data: &[u8], byte_order: &ByteOrder) -> Result<TraceData, Se
     let traces = data.chunks_exact(3)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => {
-                let sign = if b[0] & 0x80 != 0 { 0xFF } else { 0x00 };
-                Ok(u32::from_le_bytes([b[0], b[1], b[2], sign]))
+                Ok(u32::from_le_bytes([b[0], b[1], b[2], 0x00]))
             },
             ByteOrder::BigEndian => {
-                let sign = if b[0] & 0x80 != 0 { 0xFF } else { 0x00 };
-                Ok(u32::from_be_bytes([sign, b[0], b[1], b[2]]))
+                Ok(u32::from_be_bytes([0x00, b[0], b[1], b[2]]))
             },
             ByteOrder::SwappedWord => Err(SegyError::DecodingError(String::from("Unsupported encoding: 3-byte swapped-word integer"))),
         })
