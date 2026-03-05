@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::ErrorKind::{InvalidInput};
 use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
-use pyo3::exceptions::{PyIOError, PyTypeError};
+use pyo3::exceptions::{PyIOError, PyTypeError, PyValueError};
 use pyo3::types::{PyString, PyDict};
 use numpy::{IntoPyArray, PyArray2};
 use memmap2::{MmapOptions, Mmap};
@@ -135,12 +135,28 @@ impl Display for SegyError {
     }
 }
 
+impl SegyError{
+    fn kind(&self) -> &str{
+        match self {
+            SegyError::Io(_) => "IO",
+            SegyError::TraceOutOfRange{ requested: _requested, trace_count: _trace_count } => "out_of_range",
+            SegyError::InvalidTraceRange {start: _start, end: _end, trace_count: _trace_count} => "invalid_range",
+            SegyError::UnsupportedDataFormat => "unsupported_format",
+            SegyError::CorruptTrace => "corrupt_trace",
+            SegyError::ParseFailure => "parse_failure",
+            SegyError::RequestMemoryError => "memory_error",
+            SegyError::DecodingError(_) => "decoding_error",
+        }
+    }
+}
+
 #[pyclass]
 struct SegyFile{
     b_header: BinaryHeader,
     trace_index: Vec<u64>,
     mmap: Mmap,
     trace_count: u64,
+    available_mem: u64,
 }
 
 #[pymethods]
@@ -153,7 +169,8 @@ impl SegyFile {
     fn get_trace<'py>(&self, py: Python<'py>, trace_number: u32) -> PyResult<Bound<'py, PyAny>> {
         let trace = match self.get_trace_data(trace_number){
             Ok(t) => t,
-            Err(e) => return Err(PyTypeError::new_err(e.to_string()))
+            Err(e) if e.kind() == "IO" => return Err(PyIOError::new_err(e.to_string())),
+            Err(e) => return Err(PyValueError::new_err(e.to_string())),
         };
 
         trace_to_numpy(py, trace)
@@ -167,10 +184,10 @@ impl SegyFile {
     ) -> PyResult<Bound<'py, PyAny>> {
         let traces = self
             .get_trace_range_data(start, end)
-            .map_err(|e| PyTypeError::new_err(e.to_string()))?;
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         if traces.is_empty() {
-            return Err(PyTypeError::new_err("Got empty array"));
+            return Err(PyValueError::new_err("Got empty array"));
         }
 
         match &traces[0] {
@@ -358,7 +375,11 @@ impl SegyFile{
             Err(e) => return Err(PyIOError::new_err(format!("Failed to construct trace index: {}", e))),
         };
 
-        Ok(Self{b_header, trace_index, mmap, trace_count})
+        let mut sys = System::new();
+        sys.refresh_memory();
+        let available_mem = sys.available_memory();
+
+        Ok(Self{b_header, trace_index, mmap, trace_count, available_mem})
     }
 
     fn build_trace_index(b_header: &BinaryHeader, mmap: &Mmap) -> Result<(u64, Vec<u64>), SegyError> {
@@ -429,8 +450,6 @@ impl SegyFile{
     fn get_trace_range_data(&self, start: u32, end: u32) -> Result<Vec<TraceData>, SegyError>{
         let trace_index = &self.trace_index;
         let b_header = &self.b_header;
-        let mut sys = System::new();
-        sys.refresh_memory();
 
         if start >= end {
             return Err(SegyError::Io(std::io::Error::new(
@@ -449,9 +468,8 @@ impl SegyFile{
 
         // Since data request can fetch for unlimited range of traces, it is necessary to limit how much memory can be used
         // The max will be decided based on available memory. If it is lower than 512MB that arbitrary limit will be used instead.
-        let available_mem = sys.available_memory();
         //12,5%
-        let soft_cap = available_mem / 8;
+        let soft_cap = self.available_mem / 8;
         let floor = 512 * 1024 * 1024;
         let mem_cap = soft_cap.max(floor);
         let samples_per_trace = b_header.samples_per_trace as u64;
