@@ -9,6 +9,18 @@ use pyo3::types::{PyString, PyDict};
 use numpy::{IntoPyArray, PyArray2};
 use memmap2::{MmapOptions, Mmap};
 
+macro_rules! build_array {
+    ($py:expr, $traces:expr, $variant:path, $T:ty) => {{
+        let vec2: Vec<Vec<$T>> = $traces
+            .into_iter()
+            .map(|t| if let $variant(v) = t { v } else { unreachable!() })
+            .collect();
+        PyArray2::from_vec2($py, &vec2)
+            .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))
+            .map(|a| a.into_any())
+    }};
+}
+
 #[pymodule]
 fn _fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SegyFile>()?;
@@ -103,6 +115,7 @@ pub enum SegyError {
     TraceOutOfRange { requested: u32, trace_count: usize },
     InvalidTraceRange {start: u32, end: u32, trace_count: usize},
     DecodingError(String),
+    InvalidArgument(String),
     UnsupportedDataFormat,
     CorruptTrace,
     ParseFailure,
@@ -130,6 +143,7 @@ impl Display for SegyError {
             SegyError::ParseFailure => String::from("Failed to parse data"),
             SegyError::DecodingError(e) => format!("Decoding error: {}", e),
             SegyError::RequestMemoryError => String::from("Requested data exceeds your memory limit, try with smaller trace range."),
+            SegyError::InvalidArgument(e) => format!("Invalid argument: {}", e),
         };
         write!(f, "{}", result)
     }
@@ -139,13 +153,14 @@ impl SegyError{
     fn kind(&self) -> &str{
         match self {
             SegyError::Io(_) => "IO",
-            SegyError::TraceOutOfRange{ requested: _requested, trace_count: _trace_count } => "out_of_range",
-            SegyError::InvalidTraceRange {start: _start, end: _end, trace_count: _trace_count} => "invalid_range",
+            SegyError::TraceOutOfRange{ .. } => "out_of_range",
+            SegyError::InvalidTraceRange { .. } => "invalid_range",
             SegyError::UnsupportedDataFormat => "unsupported_format",
             SegyError::CorruptTrace => "corrupt_trace",
             SegyError::ParseFailure => "parse_failure",
             SegyError::RequestMemoryError => "memory_error",
             SegyError::DecodingError(_) => "decoding_error",
+            SegyError::InvalidArgument(_) => "argument_error",
         }
     }
 }
@@ -191,113 +206,18 @@ impl SegyFile {
         }
 
         match &traces[0] {
-            TraceData::I8(_) => {
-                let vec2: Vec<Vec<i8>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::I8(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::I16(_) => {
-                let vec2: Vec<Vec<i16>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::I16(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::I24(_) => {
-                let vec2: Vec<Vec<i32>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::I24(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::I32(_) => {
-                let vec2: Vec<Vec<i32>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::I32(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::I64(_) => {
-                let vec2: Vec<Vec<i64>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::I64(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },TraceData::U8(_) => {
-                let vec2: Vec<Vec<u8>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::U8(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::U16(_) => {
-                let vec2: Vec<Vec<u16>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::U16(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::U24(_) => {
-                let vec2: Vec<Vec<u32>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::U24(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::U32(_) => {
-                let vec2: Vec<Vec<u32>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::U32(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::U64(_) => {
-                let vec2: Vec<Vec<u64>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::U64(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::F32(_) => {
-                let vec2: Vec<Vec<f32>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::F32(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
-            TraceData::F64(_) => {
-                let vec2: Vec<Vec<f64>> = traces
-                    .into_iter()
-                    .map(|t| if let TraceData::F64(v) = t { v } else { unreachable!() })
-                    .collect();
-                let array = PyArray2::from_vec2(py, &vec2)
-                    .map_err(|e| PyTypeError::new_err(format!("from_vec2 error: {:?}", e)))?;
-                Ok(array.into_any())
-            },
+            TraceData::I8(_) => build_array!(py, traces, TraceData::I8,   i8),
+            TraceData::I16(_) => build_array!(py, traces, TraceData::I16,   i16),
+            TraceData::I24(_) => build_array!(py, traces, TraceData::I24,   i32),
+            TraceData::I32(_) => build_array!(py, traces, TraceData::I32,   i32),
+            TraceData::I64(_) => build_array!(py, traces, TraceData::I64,   i64),
+            TraceData::U8(_) => build_array!(py, traces, TraceData::U8,   u8),
+            TraceData::U16(_) => build_array!(py, traces, TraceData::U16,   u16),
+            TraceData::U24(_) => build_array!(py, traces, TraceData::U24,   u32),
+            TraceData::U32(_) => build_array!(py, traces, TraceData::U32,   u32),
+            TraceData::U64(_) => build_array!(py, traces, TraceData::U64,   u64),
+            TraceData::F32(_) => build_array!(py, traces, TraceData::F32,  f32),
+            TraceData::F64(_) => build_array!(py, traces, TraceData::F64,   f64),
         }
     }
 
@@ -377,6 +297,9 @@ impl SegyFile{
 
         let mut sys = System::new();
         sys.refresh_memory();
+
+        //Technically this value can become stale if the process is running for a long time and
+        // not represent the current state of the system accordingly.
         let available_mem = sys.available_memory();
 
         Ok(Self{b_header, trace_index, mmap, trace_count, available_mem})
@@ -416,10 +339,7 @@ impl SegyFile{
         let trace_index = &self.trace_index;
 
         if trace_number == 0 {
-            return Err(SegyError::Io(std::io::Error::new(
-                InvalidInput,
-                "Trace number is 1-based. 0 is not valid"
-            )));
+            return Err(SegyError::InvalidArgument(String::from("Trace number is 1-based. 0 is not valid")));
         } else if trace_number > trace_index.len() as u32 {
             return Err(SegyError::TraceOutOfRange {
                 requested: trace_number,
@@ -488,7 +408,7 @@ impl SegyFile{
             let header: &[u8] = &self.mmap[trace_start as usize .. trace_start as usize + 240];
             let samples_in_trace = read_i16(header, 114, &b_header.byte_order);
 
-            let samples = if samples_in_trace == 0 {
+            let samples = if samples_in_trace <= 0 {
                 samples_per_trace
             } else {
                 samples_in_trace as u64
