@@ -87,6 +87,8 @@ class TextHeaderWindow(QDialog):
 class App(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        #TODO: some of those are no longer necessary
         self.functions_table = None
         self.data_table = None
         self.canvas = None
@@ -137,7 +139,7 @@ class App(QMainWindow):
         if path:
             self.segy_file = SegyFile(path)
             self.metadata = self.segy_file.get_metadata()
-            self.populate_data_table(self.metadata)
+            self.populate_data_table()
             self.sample_interval = float(self.metadata.get("Sample Interval"))
 
     def drop_file(self):
@@ -146,12 +148,11 @@ class App(QMainWindow):
         self.trace_data = None
 
         placeholder_data = [
-            ("Samples Per Trace", "—"),
-            ("Bytes Per Sample", "—"),
-            ("Data Format", "—"),
-            ("Byte Order", "—"),
-            ("Trace Count", "—"),
-            ("Sample Interval", "—"),
+            ("-", "-"),
+            ("-", "-"),
+            ("-", "-"),
+            ("-", "-"),
+            ("-", "-"),
         ]
 
         for row, (key, value) in enumerate(placeholder_data):
@@ -244,17 +245,13 @@ class App(QMainWindow):
             except Exception as e:
                 self.show_error(str(e))
 
-    def populate_data_table(self, metadata):
-        rows = self.data_table.rowCount()
+    def populate_data_table(self):
+        for i, kv_pair in enumerate(self.metadata.items()):
+            if kv_pair[0] == 'Index':
+                continue
 
-        for i in range(rows):
-            key_type = self.data_table.item(i, 0)
-            if key_type is None:
-                break
-            key_text = key_type.text()
-
-            value = self.metadata.get(key_text, "Undefined")
-            self.data_table.setItem(i, 1, QTableWidgetItem(str(value)))
+            self.data_table.setItem(i, 0, QTableWidgetItem(str(kv_pair[0])))
+            self.data_table.setItem(i, 1, QTableWidgetItem(str(kv_pair[1])))
 
     def create_layout(self):
         central_widget = QWidget()
@@ -286,12 +283,11 @@ class App(QMainWindow):
         table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
 
         placeholder_data = [
-            ("Samples Per Trace", "—"),
-            ("Bytes Per Sample", "—"),
-            ("Data Format", "—"),
-            ("Byte Order", "—"),
-            ("Trace Count", "—"),
-            ("Sample Interval", "—"),
+            ("-", "-"),
+            ("-", "-"),
+            ("-", "-"),
+            ("-", "-"),
+            ("-", "-"),
         ]
 
         for row, (key, value) in enumerate(placeholder_data):
