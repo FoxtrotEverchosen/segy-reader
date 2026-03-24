@@ -87,4 +87,7 @@ class PlotCanvas(QWidget):
             self.cbar = None
 
         self.ax.clear()
+        self.ax.set_title("Trace View")
+        self.ax.set_xlabel("Sample Index")
+        self.ax.set_ylabel("Amplitude")
         self.canvas.draw_idle()

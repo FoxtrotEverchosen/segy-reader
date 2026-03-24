@@ -116,7 +116,7 @@ class App(QMainWindow):
         file_menu = QMenu("File", self)
         menubar.addMenu(file_menu)
 
-        file_menu.addAction("Open SEG-Y", self.open_file_dialog)
+        file_menu.addAction("Open SEG-Y file", self.open_file_dialog)
         file_menu.addAction("Close SEG-Y file", self.drop_file)
 
         # edit_menu = QMenu("Edit", self)
@@ -146,6 +146,9 @@ class App(QMainWindow):
         self.segy_file = None
         self.metadata = None
         self.trace_data = None
+
+        self.data_table.setRowCount(0)
+        self.data_table.setRowCount(40)
 
         placeholder_data = [
             ("-", "-"),
@@ -276,7 +279,7 @@ class App(QMainWindow):
     def create_data_table(self):
         table = QTableWidget()
         table.setColumnCount(2)
-        table.setRowCount(20)
+        table.setRowCount(40)
 
         table.setHorizontalHeaderLabels(["Property", "Value"])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
