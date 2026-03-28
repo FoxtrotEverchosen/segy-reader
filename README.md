@@ -80,3 +80,31 @@ Make sure your virtual environment is activated before running `maturin develop`
 **On Linux**, you may need to install build tools, but the project should work same as on Windows:
 
 `sudo apt install python3-dev build-essential`
+
+## Preview (Kerry3D used as input data - accessible through segy wiki)
+**Please note, that the rendered UI might differ based on your OS or (in case of Linux) Desktop Environment you are using. 
+Those screenshots have been produced on Fedora Linux with KDE Plasma.**
+
+Full window with view of a chosen trace presented on a plot.
+
+![Screenshot](imgs/Trace_view.png)
+
+Metadata view - the right panel (count of displayed properties is subject to change):
+
+![Screenshot](imgs/Panel.png)
+
+Preview into Textual Header of the file:
+
+![Screenshot](imgs/Textual_header.png)
+
+Plot of a seismic section (traces 45000 - 46000):
+
+![Screenshot](imgs/Trace_range_plot.png)
+
+Window with settings of median XY filter:
+
+![Screenshot](imgs/median_filter.png)
+
+Plot after applying median filter with settings presented above:
+
+![Screenshot](imgs/after_filter_plot.png)

@@ -49,7 +49,11 @@ struct BinaryHeader{
     bytes_per_sample: i16,
     data_format: DataFormat,
     extended_text_header_count: i16,
-    byte_order: ByteOrder
+    byte_order: ByteOrder,
+    environment_type: EnvironmentType,
+    dimensionality_type: DimensionalityType,
+    is_time_lapsed: bool,
+    layout_type: LayoutType,
 }
 
 // Only handles data formats compatible with Revision standard <= 1
@@ -165,6 +169,71 @@ impl SegyError{
     }
 }
 
+#[derive(Debug)]
+enum EnvironmentType{
+    Land,
+    Marine,
+    Transition,
+    Downhole,
+    Unspecified,
+}
+
+impl EnvironmentType {
+    pub fn as_str(&self) -> &str {
+        match self{
+            EnvironmentType::Land => "Land",
+            EnvironmentType::Marine => "Marine",
+            EnvironmentType::Transition => "Transition",
+            EnvironmentType::Downhole => "Downhole",
+            EnvironmentType::Unspecified => "Unspecified",
+        }
+    }
+}
+
+#[derive(Debug)]
+enum DimensionalityType{
+    D1,
+    D2,
+    D3,
+    Unspecified,
+}
+
+impl DimensionalityType {
+    pub fn as_str(&self) -> &str {
+        match self{
+            DimensionalityType::D1 => "1D",
+            DimensionalityType::D2 => "2D",
+            DimensionalityType::D3 => "3D",
+            DimensionalityType::Unspecified => "Unspecified",
+        }
+    }
+}
+
+#[derive(Debug)]
+enum LayoutType{
+    ParallelLines,
+    CrossSpread,
+    Patches,
+    TowedStreamer,
+    OceanBottomSensors,
+    PseudoRandomSensor,
+    Unspecified,
+}
+
+impl LayoutType {
+    pub fn as_str(&self) -> &str {
+        match self{
+            LayoutType::ParallelLines => "Parallel Lines",
+            LayoutType::CrossSpread => "Cross-Spread",
+            LayoutType::Patches => "Patches",
+            LayoutType::TowedStreamer => "Towed Streamer",
+            LayoutType::OceanBottomSensors => "Ocean Bottom Sensors",
+            LayoutType::PseudoRandomSensor => "Pseudo Random Sensor",
+            LayoutType::Unspecified => "Unspecified",
+        }
+    }
+}
+
 #[pyclass]
 struct SegyFile{
     b_header: BinaryHeader,
@@ -206,18 +275,18 @@ impl SegyFile {
         }
 
         match &traces[0] {
-            TraceData::I8(_) => build_array!(py, traces, TraceData::I8,   i8),
-            TraceData::I16(_) => build_array!(py, traces, TraceData::I16,   i16),
-            TraceData::I24(_) => build_array!(py, traces, TraceData::I24,   i32),
-            TraceData::I32(_) => build_array!(py, traces, TraceData::I32,   i32),
-            TraceData::I64(_) => build_array!(py, traces, TraceData::I64,   i64),
-            TraceData::U8(_) => build_array!(py, traces, TraceData::U8,   u8),
-            TraceData::U16(_) => build_array!(py, traces, TraceData::U16,   u16),
-            TraceData::U24(_) => build_array!(py, traces, TraceData::U24,   u32),
-            TraceData::U32(_) => build_array!(py, traces, TraceData::U32,   u32),
-            TraceData::U64(_) => build_array!(py, traces, TraceData::U64,   u64),
-            TraceData::F32(_) => build_array!(py, traces, TraceData::F32,  f32),
-            TraceData::F64(_) => build_array!(py, traces, TraceData::F64,   f64),
+            TraceData::I8(_) => build_array!(py, traces, TraceData::I8, i8),
+            TraceData::I16(_) => build_array!(py, traces, TraceData::I16, i16),
+            TraceData::I24(_) => build_array!(py, traces, TraceData::I24, i32),
+            TraceData::I32(_) => build_array!(py, traces, TraceData::I32, i32),
+            TraceData::I64(_) => build_array!(py, traces, TraceData::I64, i64),
+            TraceData::U8(_) => build_array!(py, traces, TraceData::U8, u8),
+            TraceData::U16(_) => build_array!(py, traces, TraceData::U16, u16),
+            TraceData::U24(_) => build_array!(py, traces, TraceData::U24, u32),
+            TraceData::U32(_) => build_array!(py, traces, TraceData::U32, u32),
+            TraceData::U64(_) => build_array!(py, traces, TraceData::U64, u64),
+            TraceData::F32(_) => build_array!(py, traces, TraceData::F32, f32),
+            TraceData::F64(_) => build_array!(py, traces, TraceData::F64, f64),
         }
     }
 
@@ -225,14 +294,21 @@ impl SegyFile {
         let b_header = &self.b_header;
         let dict = PyDict::new(py);
 
-        dict.set_item("Sample Interval", b_header.sample_interval)?;
-        dict.set_item("Samples Per Trace", b_header.samples_per_trace)?;
-        dict.set_item("Bytes Per Sample", b_header.bytes_per_sample)?;
-        dict.set_item("Extended Text Header Count", b_header.extended_text_header_count)?;
-        dict.set_item("Data Format", b_header.data_format.as_str())?;
-        dict.set_item("Byte Order", b_header.byte_order.as_str())?;
-        dict.set_item("Index", &self.trace_index)?;
         dict.set_item("Trace Count", self.trace_count)?;
+        dict.set_item("Samples Per Trace", b_header.samples_per_trace)?;
+        dict.set_item("Sample Interval", b_header.sample_interval)?;
+        dict.set_item("Bytes Per Sample", b_header.bytes_per_sample)?;
+        dict.set_item("Data Format", b_header.data_format.as_str())?;
+        dict.set_item("Environment", b_header.environment_type.as_str())?;
+        dict.set_item("Dimensionality", b_header.dimensionality_type.as_str())?;
+        dict.set_item("Is time lapsed", b_header.is_time_lapsed)?;
+        dict.set_item("Layout", b_header.layout_type.as_str())?;
+
+        dict.set_item("Extended Text Header Count", b_header.extended_text_header_count)?;
+        dict.set_item("Byte Order", b_header.byte_order.as_str())?;
+
+        //TODO: is it even needed here anymore?
+        dict.set_item("Index", &self.trace_index)?;
 
         Ok(dict)
     }
@@ -513,13 +589,49 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         _ => return Err(SegyError::UnsupportedDataFormat)
     };
 
+    const ENVIRONMENT_MASK: i16 = 0x07;
+    const DIMENSIONALITY_MASK: i16 = 0x20;
+    const LAYOUT_MASK: i16 = 0x780;
+
+    let survey_type = read_i16(buf, 310, &byte_order);
+    let environment_type = match survey_type & ENVIRONMENT_MASK {
+        1 => EnvironmentType::Land,
+        2 => EnvironmentType::Marine,
+        3 => EnvironmentType::Transition,
+        4 => EnvironmentType::Downhole,
+        _ => EnvironmentType::Unspecified,
+    };
+
+    let is_time_lapsed = (survey_type & 0x20) != 0;
+
+    let dimensionality_type = match survey_type & DIMENSIONALITY_MASK {
+        8 => DimensionalityType::D1,
+        16 => DimensionalityType::D2,
+        24 => DimensionalityType::D3,
+        _ => DimensionalityType::Unspecified,
+    };
+
+    let layout_type = match survey_type & LAYOUT_MASK {
+        128 => LayoutType::ParallelLines,
+        256 => LayoutType::CrossSpread,
+        512 => LayoutType::Patches,
+        1024 => LayoutType::TowedStreamer,
+        1152  => LayoutType::OceanBottomSensors,
+        1280 => LayoutType::PseudoRandomSensor,
+        _ => LayoutType::Unspecified,
+    };
+
     Ok(BinaryHeader{
         sample_interval,
         samples_per_trace,
         bytes_per_sample,
         data_format,
         extended_text_header_count,
-        byte_order
+        byte_order,
+        environment_type,
+        is_time_lapsed,
+        dimensionality_type,
+        layout_type,
     })
 }
 
@@ -558,6 +670,7 @@ fn ieef32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32 {
         ByteOrder::BigEndian => u32::from_be_bytes(bytes),
         ByteOrder::SwappedWord => u32::from_be_bytes([bytes[1], bytes[0], bytes[3], bytes[2]]),
     };
+
     f32::from_bits(bits)
 }
 
