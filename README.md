@@ -81,6 +81,11 @@ Make sure your virtual environment is activated before running `maturin develop`
 
 `sudo apt install python3-dev build-essential`
 
+To run the GUI you want to run the app.py script located in python/fastsegy/gui/app.py.
+Assuming that you have installed the libraries globally or activated a virtual environment, you could run the following command in console from the project root directory:
+
+`python python/fastsegy/gui/app.py`
+
 ## Preview (Kerry3D used as input data - accessible through segy wiki)
 **Please note, that the rendered UI might differ based on your OS or (in case of Linux) Desktop Environment you are using. 
 Those screenshots have been produced on Fedora Linux with KDE Plasma.**
