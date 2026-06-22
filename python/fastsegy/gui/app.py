@@ -134,7 +134,7 @@ class App(QMainWindow):
 
     def open_file_dialog(self):
         home_dir = str(Path.home())
-        path = QFileDialog.getOpenFileName(self, 'Open file', home_dir, filter="SEG-Y files (*.seg *.segy)")[0]
+        path = QFileDialog.getOpenFileName(self, 'Open file', home_dir, filter="SEG-Y files (*.seg *.segy *.sgy)")[0]
 
         if path:
             self.segy_file = SegyFile(path)
