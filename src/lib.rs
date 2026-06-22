@@ -1,6 +1,8 @@
+#![warn(clippy::pedantic)]
+
 use sysinfo::System;
 use std::fmt::Display;
-use std::fs::File;
+use std::fs::{File};
 use std::io::ErrorKind::{InvalidInput};
 use pyo3::prelude::*;
 use ebcdic::ebcdic::Ebcdic;
@@ -45,14 +47,16 @@ enum TraceData{
 #[derive(Debug)]
 struct BinaryHeader{
     sample_interval: i16,
-    samples_per_trace: i16,
-    bytes_per_sample: i16,
+    samples_per_trace: usize,
+    bytes_per_sample: usize,
+    extended_text_header_count: usize,
+    first_trace_offset: u64,
+    data_trailer_count: i16,
+    is_time_lapsed: bool,
     data_format: DataFormat,
-    extended_text_header_count: i16,
     byte_order: ByteOrder,
     environment_type: EnvironmentType,
     dimensionality_type: DimensionalityType,
-    is_time_lapsed: bool,
     layout_type: LayoutType,
 }
 
@@ -104,7 +108,8 @@ enum ByteOrder{
 }
 
 impl ByteOrder {
-    pub fn as_str(&self) -> &'static str {
+    // ByteOrder carries no heap data, so can be efficiently passed by value
+    pub fn as_str(self) -> &'static str {
         match self {
             ByteOrder::BigEndian => "Big Endian",
             ByteOrder::LittleEndian => "Little Endian",
@@ -137,7 +142,7 @@ impl Display for SegyError {
         let result = match self {
             SegyError::Io(e) => e.to_string(),
             SegyError::TraceOutOfRange { requested, trace_count} => {
-                format!("Trace out of range. Requested {} trace, out of {} traces", requested, trace_count)
+                format!("Trace out of range. Requested {requested} trace, out of {trace_count} traces")
             },
             SegyError::InvalidTraceRange { start, end, trace_count} => {
                 format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)")
@@ -145,11 +150,11 @@ impl Display for SegyError {
             SegyError::UnsupportedDataFormat => String::from("Unsupported data format"),
             SegyError::CorruptTrace => String::from("Corrupt trace segment"),
             SegyError::ParseFailure => String::from("Failed to parse data"),
-            SegyError::DecodingError(e) => format!("Decoding error: {}", e),
+            SegyError::DecodingError(e) => format!("Decoding error: {e}"),
             SegyError::RequestMemoryError => String::from("Requested data exceeds your memory limit, try with smaller trace range."),
-            SegyError::InvalidArgument(e) => format!("Invalid argument: {}", e),
+            SegyError::InvalidArgument(e) => format!("Invalid argument: {e}"),
         };
-        write!(f, "{}", result)
+        write!(f, "{result}")
     }
 }
 
@@ -257,7 +262,7 @@ impl SegyFile {
             Err(e) => return Err(PyValueError::new_err(e.to_string())),
         };
 
-        trace_to_numpy(py, trace)
+        Ok(trace_to_numpy(py, trace))
     }
 
     fn get_trace_range<'py>(
@@ -303,12 +308,8 @@ impl SegyFile {
         dict.set_item("Dimensionality", b_header.dimensionality_type.as_str())?;
         dict.set_item("Is time lapsed", b_header.is_time_lapsed)?;
         dict.set_item("Layout", b_header.layout_type.as_str())?;
-
         dict.set_item("Extended Text Header Count", b_header.extended_text_header_count)?;
         dict.set_item("Byte Order", b_header.byte_order.as_str())?;
-
-        //TODO: is it even needed here anymore?
-        dict.set_item("Index", &self.trace_index)?;
 
         Ok(dict)
     }
@@ -364,49 +365,50 @@ impl SegyFile{
         };
         let b_header = match parse_binary_header(&mmap[3200..3600]){
             Ok(h) => h,
-            Err(e) => return Err(PyIOError::new_err(format!("Failed to open file: {}", e)))
+            Err(e) => return Err(PyIOError::new_err(format!("Failed to open file: {e}")))
         };
-        let (trace_count, trace_index) = match Self::build_trace_index(&b_header, &mmap){
-            Ok((count, index)) => (count, index),
-            Err(e) => return Err(PyIOError::new_err(format!("Failed to construct trace index: {}", e))),
-        };
+        let (trace_count, trace_index) = Self::build_trace_index(&b_header, &mmap);
 
         let mut sys = System::new();
         sys.refresh_memory();
 
-        //Technically this value can become stale if the process is running for a long time and
+        // This value could become stale if the process is running for a long time and
         // not represent the current state of the system accordingly.
         let available_mem = sys.available_memory();
 
         Ok(Self{b_header, trace_index, mmap, trace_count, available_mem})
     }
 
-    fn build_trace_index(b_header: &BinaryHeader, mmap: &Mmap) -> Result<(u64, Vec<u64>), SegyError> {
+    fn build_trace_index(b_header: &BinaryHeader, mmap: &Mmap) -> (u64, Vec<u64>) {
+        // TODO: deleted unnecessary wrapping in result??
         // Samples per trace read from binary header might not be correct for older data
         // Hence it might(?) be necessary to walk through whole file and count traces manually
         let mut trace_index: Vec<u64> = Vec::new();
         let mut count: u64 = 0;
-        let mut offset = 3600 + b_header.extended_text_header_count as usize * 3200; //text header 3200, bin header 400
+        let mut offset = 3600 + b_header.extended_text_header_count * 3200; //text header 3200, bin header 400
 
+        // TODO: since revision 2.0 traces can be followed by X additional 3200-byte data trailers
         while offset + 240 < mmap.len(){
-            let samples_in_trace = read_i16(mmap, offset+114, &b_header.byte_order);
-            let samples = if samples_in_trace <= 0 {
-                b_header.samples_per_trace as u64
+
+            // This reads sample count from TRACE header, which *should* be more accurate
+            let samples_in_trace = usize::try_from(read_i16(mmap, offset+114, b_header.byte_order)).expect("sample in trace cannot be negative");
+            let samples = if samples_in_trace == 0 {
+                b_header.samples_per_trace
             } else {
-                samples_in_trace as u64
+                samples_in_trace
             };
 
-            let data_bytes = 240 + samples * b_header.bytes_per_sample as u64;
-            if offset + data_bytes as usize > mmap.len(){
+            let data_bytes = 240 + samples * b_header.bytes_per_sample;
+            if offset + data_bytes > mmap.len(){
                 break;
             }
 
             trace_index.push(offset as u64);
-            offset += data_bytes as usize;
+            offset += data_bytes;
             count += 1;
         }
 
-        Ok((count, trace_index))
+        (count, trace_index)
     }
 
     fn get_trace_data(&self, trace_number: u32) -> Result<TraceData, SegyError> {
@@ -416,7 +418,10 @@ impl SegyFile{
 
         if trace_number == 0 {
             return Err(SegyError::InvalidArgument(String::from("Trace number is 1-based. 0 is not valid")));
-        } else if trace_number > trace_index.len() as u32 {
+        }
+
+        // Most files should not include more than 2^16 traces. In rare cases that value could reach up to 2^32 as per SEG-Y documentation
+        if trace_number > u32::try_from(trace_index.len()).expect("It should be impossible for file to contain more than 2^32 traces") {
             return Err(SegyError::TraceOutOfRange {
                 requested: trace_number,
                 trace_count: self.trace_index.len(),
@@ -424,21 +429,22 @@ impl SegyFile{
         }
 
         let target = trace_number - 1;
-        let trace_start = trace_index[target as usize];
 
-        let header: &[u8] = &self.mmap[trace_start as usize .. trace_start as usize + 240];
-        let samples_in_trace = read_i16(header, 114, &b_header.byte_order);
+        let trace_start = usize::try_from(trace_index[target as usize])
+            .expect("mmap should have failed before any offset could exceed usize::MAX");
 
-        let samples = if samples_in_trace <= 0 {
-            b_header.samples_per_trace as u64
+        let header: &[u8] = &self.mmap[trace_start .. trace_start + 240];
+        let samples_in_trace = usize::try_from(read_i16(header, 114, b_header.byte_order)).expect("sample in trace cannot be negative");
+        let samples = if samples_in_trace == 0 {
+            b_header.samples_per_trace
         } else {
-            samples_in_trace as u64
+            samples_in_trace
         };
 
-        let data_bytes = samples * b_header.bytes_per_sample as u64;
-        let data_start = trace_start as usize + 240;
-        let raw_buf = &self.mmap[data_start .. data_start + data_bytes as usize];
-        let trace: TraceData = Self::decode_trace(b_header, &byte_order, raw_buf)?;
+        let data_bytes = samples * b_header.bytes_per_sample;
+        let data_start = trace_start + 240;
+        let raw_buf = &self.mmap[data_start .. data_start + data_bytes];
+        let trace: TraceData = Self::decode_trace(b_header, byte_order, raw_buf)?;
 
         Ok(trace)
     }
@@ -451,10 +457,9 @@ impl SegyFile{
             return Err(SegyError::Io(std::io::Error::new(
                 InvalidInput,
                 "Starting index must be lower than ending index"
-            )))
+            )));
         }
-
-        if start == 0 || end > trace_index.len() as u32 {
+        if start == 0 || end as usize > trace_index.len() {
             return Err(SegyError::InvalidTraceRange {
                 start,
                 end,
@@ -466,42 +471,37 @@ impl SegyFile{
         // The max will be decided based on available memory. If it is lower than 512MB that arbitrary limit will be used instead.
         //12,5%
         let soft_cap = self.available_mem / 8;
-        let floor = 512 * 1024 * 1024;
-        let mem_cap = soft_cap.max(floor);
-        let samples_per_trace = b_header.samples_per_trace as u64;
-        let bytes_per_sample = b_header.bytes_per_sample as u64;
+        let mem_cap = soft_cap.max(512 * 1024 * 1024);
+        let trace_count = (end - start + 1) as usize;
+        let total_bytes = trace_count * b_header.samples_per_trace * b_header.bytes_per_sample;
 
-        let total_bytes = (end - start + 1) as u64 * samples_per_trace * bytes_per_sample;
-        if total_bytes > mem_cap {
+        if total_bytes as u64 > mem_cap {
             return Err(SegyError::RequestMemoryError);
         }
 
-        let byte_order: ByteOrder = self.b_header.byte_order;
-        let mut data: Vec<TraceData> = Vec::with_capacity((end - start + 1) as usize);
+        let byte_order = self.b_header.byte_order;
 
-        for target in (start - 1) as usize ..end as usize{
-            let trace_start = trace_index[target];
-            let header: &[u8] = &self.mmap[trace_start as usize .. trace_start as usize + 240];
-            let samples_in_trace = read_i16(header, 114, &b_header.byte_order);
-
-            let samples = if samples_in_trace <= 0 {
-                samples_per_trace
-            } else {
-                samples_in_trace as u64
-            };
-
-            let data_bytes = samples * b_header.bytes_per_sample as u64;
-            let data_start = trace_start as usize + 240;
-            let raw_buf = &self.mmap[data_start .. data_start + data_bytes as usize];
-
-            let trace: TraceData = Self::decode_trace(b_header, &byte_order, raw_buf)?;
-            data.push(trace);
-        }
-
-        Ok(data)
+        ((start - 1) as usize..end as usize)
+            .map(|target| {
+                let trace_start = usize::try_from(trace_index[target])
+                    .expect("mmap would have failed before offset exceeds usize::MAX");
+                let header = &self.mmap[trace_start..trace_start + 240];
+                let samples_in_trace = usize::try_from(read_i16(header, 114, b_header.byte_order))
+                    .expect("samples in trace cannot be negative");
+                let samples = if samples_in_trace == 0 {
+                    b_header.samples_per_trace
+                } else {
+                    samples_in_trace
+                };
+                let data_bytes = samples * b_header.bytes_per_sample;
+                let data_start = trace_start + 240;
+                let raw_buf = &self.mmap[data_start..data_start + data_bytes];
+                Self::decode_trace(b_header, byte_order, raw_buf)
+            })
+            .collect::<Result<Vec<_>, _>>()
     }
 
-    fn decode_trace(b_header: &BinaryHeader, byte_order: &ByteOrder, raw_buf: &[u8]) -> Result<TraceData, SegyError> {
+    fn decode_trace(b_header: &BinaryHeader, byte_order: ByteOrder, raw_buf: &[u8]) -> Result<TraceData, SegyError> {
         let trace = match b_header.data_format {
             DataFormat::IBMf32 => decode_ibm_trace(raw_buf, byte_order),
             DataFormat::IEEf32 => decode_ieef32_trace(raw_buf, byte_order),
@@ -523,46 +523,59 @@ impl SegyFile{
     }
 }
 
-fn trace_to_numpy(py: Python, trace: TraceData) -> PyResult<Bound<PyAny>> {
-    Ok(match trace {
-        TraceData::F32(v) => v.into_pyarray(py).into_any(),
-        TraceData::F64(v) => v.into_pyarray(py).into_any(),
-        TraceData::I8(v) => v.into_pyarray(py).into_any(),
-        TraceData::I16(v) => v.into_pyarray(py).into_any(),
-        TraceData::I24(v) => v.into_pyarray(py).into_any(),
-        TraceData::I32(v) => v.into_pyarray(py).into_any(),
-        TraceData::I64(v) => v.into_pyarray(py).into_any(),
-        TraceData::U8(v) => v.into_pyarray(py).into_any(),
-        TraceData::U16(v) => v.into_pyarray(py).into_any(),
-        TraceData::U24(v) => v.into_pyarray(py).into_any(),
-        TraceData::U32(v) => v.into_pyarray(py).into_any(),
-        TraceData::U64(v) => v.into_pyarray(py).into_any(),
-    })
+#[allow(clippy::match_same_arms)]
+fn trace_to_numpy(py: Python, trace: TraceData) -> Bound<PyAny> {
+    // TODO: deleted unnecessary wrapping in result??
+    macro_rules! convert {
+        ($v:expr) => { $v.into_pyarray(py).into_any() };
+    }
+
+    match trace {
+        TraceData::F32(v)  => convert!(v),
+        TraceData::F64(v)  => convert!(v),
+        TraceData::I8(v)   => convert!(v),
+        TraceData::I16(v)  => convert!(v),
+        TraceData::I24(v)  => convert!(v),
+        TraceData::I32(v)  => convert!(v),
+        TraceData::I64(v)  => convert!(v),
+        TraceData::U8(v)   => convert!(v),
+        TraceData::U16(v)  => convert!(v),
+        TraceData::U24(v)  => convert!(v),
+        TraceData::U32(v)  => convert!(v),
+        TraceData::U64(v)  => convert!(v),
+    }
 }
 
+// 0 -> 3200
+// 329  -> 3529
 fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
+    const ENVIRONMENT_MASK: i16 = 0x07;
+    const DIMENSIONALITY_MASK: i16 = 0x20;
+    const LAYOUT_MASK: i16 = 0x780;
+
+    // 3501 and 3502 hold Revision version
     let byte_order = &buf[96..100];
     let byte_order: ByteOrder = match byte_order {
-        [0x01, 0x02, 0x03, 0x04] => ByteOrder::BigEndian,
-        [0x04, 0x03, 0x02, 0x01] => ByteOrder::LittleEndian,
-        [0x02, 0x01, 0x04, 0x03] => ByteOrder::SwappedWord,
-
         // Older SEG-Y files, following Revision 0 standard encode numbers BigEndian only, therefore
         // those files would most likely have this four bytes filled with 0
-        [0x00, 0x00, 0x00, 0x00] => ByteOrder::BigEndian,
+        [0x01, 0x02, 0x03, 0x04] | [0x00, 0x00, 0x00, 0x00] => ByteOrder::BigEndian,
+        [0x04, 0x03, 0x02, 0x01] => ByteOrder::LittleEndian,
+        [0x02, 0x01, 0x04, 0x03] => ByteOrder::SwappedWord,
         _ => {
             return Err(SegyError::UnsupportedDataFormat);
         },
     };
 
-    let sample_interval = read_i16(buf, 16, &byte_order);
-    let data_format = read_i16(buf, 24, &byte_order);
-    let samples_per_trace = read_i16(buf, 20, &byte_order);
+    let sample_interval = read_i16(buf, 16, byte_order);
+    let data_format = read_i16(buf, 24, byte_order);
+    let samples_per_trace = usize::try_from(read_i16(buf, 20, byte_order)).expect("Samples per trace should never be negative");
 
-    // TODO: Look into bytes 3521, 3529, 3513, 3509 for additional useful data
-    let extended_text_header_count = read_i16(buf, 304, &byte_order);
+    // As per the SEG-Y documentation this field could store -1 to represent variable number of ext. headers.
+    // For now, the variable number of ext. textual headers will throw error
+    let extended_text_header_count = usize::try_from(read_i16(buf, 304, byte_order))
+        .map_err(|_| SegyError::UnsupportedDataFormat)?;
 
-    let bytes_per_sample: i16 = match data_format{
+    let bytes_per_sample: usize = match data_format{
         8 | 16 => 1,
         3 | 11 => 2,
         7 | 15 => 3,
@@ -570,6 +583,11 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         6 | 9 | 12 => 8,
         _ => return Err(SegyError::UnsupportedDataFormat)
     };
+
+    // Can be zero -> guaranteed(?) no data trailers
+    let data_trailer_count = read_i16(buf, 328, byte_order);
+    let first_trace_offset = read_u64(buf, 320, byte_order);
+    let fixed_length = read_i16(buf, 302, byte_order);
 
     let data_format = match data_format{
         1 => DataFormat::IBMf32,
@@ -589,11 +607,7 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         _ => return Err(SegyError::UnsupportedDataFormat)
     };
 
-    const ENVIRONMENT_MASK: i16 = 0x07;
-    const DIMENSIONALITY_MASK: i16 = 0x20;
-    const LAYOUT_MASK: i16 = 0x780;
-
-    let survey_type = read_i16(buf, 310, &byte_order);
+    let survey_type = read_i16(buf, 310, byte_order);
     let environment_type = match survey_type & ENVIRONMENT_MASK {
         1 => EnvironmentType::Land,
         2 => EnvironmentType::Marine,
@@ -625,17 +639,19 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         sample_interval,
         samples_per_trace,
         bytes_per_sample,
-        data_format,
         extended_text_header_count,
+        first_trace_offset,
+        data_trailer_count,
+        is_time_lapsed,
+        data_format,
         byte_order,
         environment_type,
-        is_time_lapsed,
         dimensionality_type,
-        layout_type,
+        layout_type
     })
 }
 
-fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
+fn read_i16(buf: &[u8], offset: usize, order: ByteOrder) -> i16 {
     let bytes = [buf[offset], buf[offset + 1]];
     match order{
         ByteOrder::BigEndian => i16::from_be_bytes(bytes),
@@ -644,7 +660,20 @@ fn read_i16(buf: &[u8], offset: usize, order: &ByteOrder) -> i16 {
     }
 }
 
-fn ibmf32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
+fn read_u64(buf: &[u8], offset: usize, order: ByteOrder) -> u64 {
+    let bytes = [buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3],
+                        buf[offset + 4], buf[offset + 5], buf[offset + 6], buf[offset + 7],];
+    match order{
+        ByteOrder::BigEndian => u64::from_be_bytes(bytes),
+        ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
+        ByteOrder::SwappedWord => u64::from_be_bytes([bytes[1], bytes[0], bytes[3], bytes[2],
+                                                            bytes[5], bytes[4], bytes[7], bytes[6]]),
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_possible_wrap)]
+fn ibmf32_from_order(bytes: [u8; 4], byte_order: ByteOrder) -> f32{
     // IBMf32 -> 1 sign bit, 7 exponent bits, 24 mantissa bits
     // unlike IEEE754, IBM 32-bit float uses base 16 exponent
     let word = match byte_order {
@@ -664,7 +693,7 @@ fn ibmf32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32{
     sign * mantissa * 16f32.powi(exponent - 64)
 }
 
-fn ieef32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32 {
+fn ieef32_from_order(bytes: [u8; 4], byte_order: ByteOrder) -> f32 {
     let bits = match byte_order {
         ByteOrder::LittleEndian => u32::from_le_bytes(bytes),
         ByteOrder::BigEndian => u32::from_be_bytes(bytes),
@@ -674,7 +703,7 @@ fn ieef32_from_order(bytes: [u8; 4], byte_order: &ByteOrder) -> f32 {
     f32::from_bits(bits)
 }
 
-fn decode_ieef32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+fn decode_ieef32_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
     let trace_data = data
         .chunks_exact(4)
         .map(|b| ieef32_from_order([b[0], b[1], b[2], b[3]], byte_order))
@@ -683,7 +712,7 @@ fn decode_ieef32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::F32(trace_data)
 }
 
-fn ieef64_from_order(bytes: [u8; 8], byte_order: &ByteOrder) -> f64 {
+fn ieef64_from_order(bytes: [u8; 8], byte_order: ByteOrder) -> f64 {
     let bits = match byte_order {
         ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
         ByteOrder::BigEndian => u64::from_be_bytes(bytes),
@@ -693,7 +722,7 @@ fn ieef64_from_order(bytes: [u8; 8], byte_order: &ByteOrder) -> f64 {
     f64::from_bits(bits)
 }
 
-fn decode_ieef64_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+fn decode_ieef64_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
     let trace_data = data
         .chunks_exact(8)
         .map(|b| ieef64_from_order([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]], byte_order))
@@ -702,7 +731,7 @@ fn decode_ieef64_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::F64(trace_data)
 }
 
-fn decode_ibm_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+fn decode_ibm_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
     let trace_data = data
         .chunks_exact(4)
         .map(|b| ibmf32_from_order([b[0], b[1], b[2], b[3]], byte_order))
@@ -718,12 +747,12 @@ fn decode_u8_trace(data: &[u8]) -> TraceData {
 }
 
 fn decode_i8_trace(data: &[u8]) -> TraceData {
-    let trace = data.iter().map(|&b| b as i8).collect();
+    let trace = data.iter().map(|&b| b.cast_signed()).collect();
 
     TraceData::I8(trace)
 }
 
-fn decode_u16_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+fn decode_u16_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
     let traces = data.chunks_exact(2)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => u16::from_le_bytes([b[0], b[1]]),
@@ -735,7 +764,7 @@ fn decode_u16_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::U16(traces)
 }
 
-fn decode_u24_trace(data: &[u8], byte_order: &ByteOrder) -> Result<TraceData, SegyError> {
+fn decode_u24_trace(data: &[u8], byte_order: ByteOrder) -> Result<TraceData, SegyError> {
     let traces = data.chunks_exact(3)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => {
@@ -751,7 +780,7 @@ fn decode_u24_trace(data: &[u8], byte_order: &ByteOrder) -> Result<TraceData, Se
     Ok(TraceData::U24(traces))
 }
 
-fn decode_u32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+fn decode_u32_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
     let traces = data.chunks_exact(4)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
@@ -763,7 +792,7 @@ fn decode_u32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::U32(traces)
 }
 
-fn decode_u64_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+fn decode_u64_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
     let traces = data.chunks_exact(8)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
@@ -776,7 +805,7 @@ fn decode_u64_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
 }
 
 
-fn decode_i16_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+fn decode_i16_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
     let traces = data.chunks_exact(2)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => i16::from_le_bytes([b[0], b[1]]),
@@ -788,7 +817,7 @@ fn decode_i16_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::I16(traces)
 }
 
-fn decode_i24_trace(data: &[u8], byte_order: &ByteOrder) -> Result<TraceData, SegyError> {
+fn decode_i24_trace(data: &[u8], byte_order: ByteOrder) -> Result<TraceData, SegyError> {
     let traces = data.chunks_exact(3)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => {
@@ -806,7 +835,7 @@ fn decode_i24_trace(data: &[u8], byte_order: &ByteOrder) -> Result<TraceData, Se
     Ok(TraceData::I24(traces))
 }
 
-fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+fn decode_i32_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
     let traces = data.chunks_exact(4)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => i32::from_le_bytes([b[0], b[1], b[2], b[3]]),
@@ -818,7 +847,7 @@ fn decode_i32_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
     TraceData::I32(traces)
 }
 
-fn decode_i64_trace(data: &[u8], byte_order: &ByteOrder) -> TraceData {
+fn decode_i64_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
     let traces = data.chunks_exact(8)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
