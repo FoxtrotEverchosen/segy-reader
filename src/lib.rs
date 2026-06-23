@@ -58,9 +58,9 @@ struct BinaryHeader{
     environment_type: EnvironmentType,
     dimensionality_type: DimensionalityType,
     layout_type: LayoutType,
+    rev_version: u8,
 }
 
-// Only handles data formats compatible with Revision standard <= 1
 #[derive(Debug)]
 enum DataFormat{
     IBMf32,         // Code: 1      bytes: 4
@@ -108,7 +108,6 @@ enum ByteOrder{
 }
 
 impl ByteOrder {
-    // ByteOrder carries no heap data, so can be efficiently passed by value
     pub fn as_str(self) -> &'static str {
         match self {
             ByteOrder::BigEndian => "Big Endian",
@@ -310,6 +309,7 @@ impl SegyFile {
         dict.set_item("Layout", b_header.layout_type.as_str())?;
         dict.set_item("Extended Text Header Count", b_header.extended_text_header_count)?;
         dict.set_item("Byte Order", b_header.byte_order.as_str())?;
+        dict.set_item("Revision Standard", b_header.rev_version)?;
 
         Ok(dict)
     }
@@ -385,13 +385,14 @@ impl SegyFile{
         // Hence it might(?) be necessary to walk through whole file and count traces manually
         let mut trace_index: Vec<u64> = Vec::new();
         let mut count: u64 = 0;
-        let mut offset = 3600 + b_header.extended_text_header_count * 3200; //text header 3200, bin header 400
 
-        // TODO: since revision 2.0 traces can be followed by X additional 3200-byte data trailers
+        //text header 3200, bin header 400
+        let mut offset = 3600 + b_header.extended_text_header_count * 3200;
         while offset + 240 < mmap.len(){
+            let reader = HeaderReader::new(&mmap[offset..offset + 240], 0, b_header.byte_order);
 
             // This reads sample count from TRACE header, which *should* be more accurate
-            let samples_in_trace = usize::try_from(read_i16(mmap, offset+114, b_header.byte_order)).expect("sample in trace cannot be negative");
+            let samples_in_trace = usize::try_from(reader.read_i16(115)).expect("sample in trace cannot be negative");
             let samples = if samples_in_trace == 0 {
                 b_header.samples_per_trace
             } else {
@@ -433,8 +434,8 @@ impl SegyFile{
         let trace_start = usize::try_from(trace_index[target as usize])
             .expect("mmap should have failed before any offset could exceed usize::MAX");
 
-        let header: &[u8] = &self.mmap[trace_start .. trace_start + 240];
-        let samples_in_trace = usize::try_from(read_i16(header, 114, b_header.byte_order)).expect("sample in trace cannot be negative");
+        let reader = HeaderReader::new(&self.mmap[trace_start..trace_start + 240], 0, b_header.byte_order);
+        let samples_in_trace = usize::try_from(reader.read_i16(115)).expect("sample in trace cannot be negative");
         let samples = if samples_in_trace == 0 {
             b_header.samples_per_trace
         } else {
@@ -485,17 +486,21 @@ impl SegyFile{
             .map(|target| {
                 let trace_start = usize::try_from(trace_index[target])
                     .expect("mmap would have failed before offset exceeds usize::MAX");
-                let header = &self.mmap[trace_start..trace_start + 240];
-                let samples_in_trace = usize::try_from(read_i16(header, 114, b_header.byte_order))
+
+                let reader = HeaderReader::new(&self.mmap[trace_start..trace_start + 240], 0, b_header.byte_order);
+                let samples_in_trace = usize::try_from(reader.read_i16(115))
                     .expect("samples in trace cannot be negative");
+
                 let samples = if samples_in_trace == 0 {
                     b_header.samples_per_trace
                 } else {
                     samples_in_trace
                 };
+
                 let data_bytes = samples * b_header.bytes_per_sample;
                 let data_start = trace_start + 240;
                 let raw_buf = &self.mmap[data_start..data_start + data_bytes];
+
                 Self::decode_trace(b_header, byte_order, raw_buf)
             })
             .collect::<Result<Vec<_>, _>>()
@@ -553,7 +558,6 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
     const DIMENSIONALITY_MASK: i16 = 0x20;
     const LAYOUT_MASK: i16 = 0x780;
 
-    // 3501 and 3502 hold Revision version
     let byte_order = &buf[96..100];
     let byte_order: ByteOrder = match byte_order {
         // Older SEG-Y files, following Revision 0 standard encode numbers BigEndian only, therefore
@@ -566,13 +570,23 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         },
     };
 
-    let sample_interval = read_i16(buf, 16, byte_order);
-    let data_format = read_i16(buf, 24, byte_order);
-    let samples_per_trace = usize::try_from(read_i16(buf, 20, byte_order)).expect("Samples per trace should never be negative");
+    let reader = HeaderReader::new(buf, 3200, byte_order);
+    let rev_version = reader.read_u8(3501);
+
+    // The current implementation could possibly not throw an error but also not parse a Rev >= 2.0 file correctly depending on file structure.
+    // To avoid problems with displaying erroneously read data, the program will return error on header parsing instead.
+    // Rev 2.0 was introduced in 2017 and as of now, there is still a very limited amount of tools that save seismic data in that standard
+    if rev_version > 1 {
+        return Err(SegyError::UnsupportedDataFormat);
+    }
+
+    let sample_interval = reader.read_i16(3217);
+    let data_format = reader.read_i16(3225);
+    let samples_per_trace = usize::try_from(reader.read_i16(3221)).expect("Samples per trace should never be negative");
 
     // As per the SEG-Y documentation this field could store -1 to represent variable number of ext. headers.
     // For now, the variable number of ext. textual headers will throw error
-    let extended_text_header_count = usize::try_from(read_i16(buf, 304, byte_order))
+    let extended_text_header_count = usize::try_from(reader.read_i16(3505))
         .map_err(|_| SegyError::UnsupportedDataFormat)?;
 
     let bytes_per_sample: usize = match data_format{
@@ -585,9 +599,9 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
     };
 
     // Can be zero -> guaranteed(?) no data trailers
-    let data_trailer_count = read_i16(buf, 328, byte_order);
-    let first_trace_offset = read_u64(buf, 320, byte_order);
-    let fixed_length = read_i16(buf, 302, byte_order);
+    let data_trailer_count = reader.read_i16(3529);
+    let first_trace_offset = reader.read_u64(3521);
+    let fixed_length = reader.read_i16(3503);
 
     let data_format = match data_format{
         1 => DataFormat::IBMf32,
@@ -607,7 +621,7 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         _ => return Err(SegyError::UnsupportedDataFormat)
     };
 
-    let survey_type = read_i16(buf, 310, byte_order);
+    let survey_type = reader.read_i16(3511);
     let environment_type = match survey_type & ENVIRONMENT_MASK {
         1 => EnvironmentType::Land,
         2 => EnvironmentType::Marine,
@@ -647,27 +661,54 @@ fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         byte_order,
         environment_type,
         dimensionality_type,
-        layout_type
+        layout_type,
+        rev_version,
     })
 }
 
-fn read_i16(buf: &[u8], offset: usize, order: ByteOrder) -> i16 {
-    let bytes = [buf[offset], buf[offset + 1]];
-    match order{
-        ByteOrder::BigEndian => i16::from_be_bytes(bytes),
-        ByteOrder::LittleEndian => i16::from_le_bytes(bytes),
-        ByteOrder::SwappedWord => i16::from_be_bytes([bytes[1], bytes[0]]),
-    }
+struct HeaderReader<'a>{
+    buf: &'a [u8],
+    base :usize,
+    order: ByteOrder,
 }
 
-fn read_u64(buf: &[u8], offset: usize, order: ByteOrder) -> u64 {
-    let bytes = [buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3],
-                        buf[offset + 4], buf[offset + 5], buf[offset + 6], buf[offset + 7],];
-    match order{
-        ByteOrder::BigEndian => u64::from_be_bytes(bytes),
-        ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
-        ByteOrder::SwappedWord => u64::from_be_bytes([bytes[1], bytes[0], bytes[3], bytes[2],
-                                                            bytes[5], bytes[4], bytes[7], bytes[6]]),
+impl<'a> HeaderReader<'a>{
+    fn new(buf :&'a [u8], base :usize, order: ByteOrder)->Self{
+        Self {buf, base, order}
+    }
+
+    fn offset(&self, doc_byte: usize) -> usize{
+        // SEG-Y documentation presents parameters of headers as list of bytes-meaning pairs. Bytes
+        // presented in docs are 1-based. Self.base represents number of byte that starts the header.
+        // In case of binary header (assuming no record tape) that value would be 3200.
+        // In that case 3201-st (1-based) byte starts the header.
+        doc_byte - self.base - 1
+    }
+
+    fn read_u8(&self, doc_byte: usize) -> u8 {
+        let ofs = self.offset(doc_byte);
+        self.buf[ofs]
+    }
+
+    fn read_i16(&self, doc_byte: usize) -> i16{
+        let ofs = self.offset(doc_byte);
+        let bytes = [self.buf[ofs], self.buf[ofs + 1]];
+        match self.order{
+            ByteOrder::BigEndian => i16::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => i16::from_le_bytes(bytes),
+            ByteOrder::SwappedWord => i16::from_be_bytes([bytes[1], bytes[0]]),
+        }
+    }
+
+    fn read_u64(&self, doc_byte: usize) -> u64{
+        let ofs = self.offset(doc_byte);
+        let bytes = self.buf[ofs .. ofs + 8].try_into().expect("Conversion to 8 element array should never fail");
+        match self.order{
+            ByteOrder::BigEndian => u64::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
+            ByteOrder::SwappedWord => u64::from_be_bytes([bytes[1], bytes[0], bytes[3], bytes[2],
+                bytes[5], bytes[4], bytes[7], bytes[6]]),
+        }
     }
 }
 
