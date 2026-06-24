@@ -5,7 +5,7 @@ use memmap2::{Mmap, MmapOptions};
 use pyo3::{pyclass, pymethods, Bound, PyAny, PyResult, Python};
 use pyo3::exceptions::{PyIOError, PyTypeError, PyValueError};
 use pyo3::types::{PyDict, PyString};
-use pyo3::prelude::*;
+use pyo3::prelude::{PyDictMethods};
 use sysinfo::System;
 use numpy::{IntoPyArray, PyArray2};
 
@@ -103,6 +103,7 @@ impl SegyFile {
 
     fn get_header<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
         let data = &self.mmap[..3200];
+        // TODO: Read extended text headers if they exist and add them to return.
 
         // In All Revision standards: textual header is 3200 bytes, padded with:
         // - 0x40 (EBCDIC space) for EBCDIC encoding
@@ -110,19 +111,13 @@ impl SegyFile {
         // This implementation checks last byte to determine encoding
         // This should work every time, as it is extremely unlikely for a textual header to fill all 3200 bytes
         let is_ebcdic = data[3199] == 0x40;
-        let mut ascii_buf = if is_ebcdic {
+        let ascii_buf = if is_ebcdic {
             let mut result = vec![0u8; 3200];
             Ebcdic::ebcdic_to_ascii(data, &mut result, data.len(), true, false);
             result
         } else {
             data.into()
         };
-
-        let end = ascii_buf.iter()
-            .rposition(|&b| b != 0)
-            .map_or(0, |i| i + 1);
-
-        ascii_buf = ascii_buf[..end].to_vec();
 
         let s = ascii_buf.chunks(80)
             .map(|line| std::str::from_utf8(line))
@@ -179,7 +174,7 @@ impl SegyFile{
             let reader = HeaderReader::new(&mmap[offset..offset + 240], 0, b_header.byte_order);
 
             // This reads sample count from TRACE header, which *should* be more accurate
-            let samples_in_trace = usize::try_from(reader.read_i16(115)).expect("sample in trace cannot be negative");
+            let samples_in_trace = usize::try_from(reader.read_i16(115)).expect("Sample count in trace cannot be negative");
             let samples = if samples_in_trace == 0 {
                 b_header.samples_per_trace
             } else {
@@ -219,10 +214,10 @@ impl SegyFile{
         let target = trace_number - 1;
 
         let trace_start = usize::try_from(trace_index[target as usize])
-            .expect("mmap should have failed before any offset could exceed usize::MAX");
+            .expect("Mmap should have failed before any offset could exceed usize::MAX");
 
         let reader = HeaderReader::new(&self.mmap[trace_start..trace_start + 240], 0, b_header.byte_order);
-        let samples_in_trace = usize::try_from(reader.read_i16(115)).expect("samples in trace cannot be negative");
+        let samples_in_trace = usize::try_from(reader.read_i16(115)).expect("Sample count in trace cannot be negative");
         let samples = if samples_in_trace == 0 {
             b_header.samples_per_trace
         } else {
@@ -257,7 +252,7 @@ impl SegyFile{
 
         // Since data request can fetch for unlimited range of traces, it is necessary to limit how much memory can be used
         // The max will be decided based on available memory. If it is lower than 512MB that arbitrary limit will be used instead.
-        //12,5%
+        // 12,5%
         let soft_cap = self.available_mem / 8;
         let mem_cap = soft_cap.max(512 * 1024 * 1024);
         let trace_count = (end - start + 1) as usize;
