@@ -103,6 +103,13 @@ impl SegyFile {
 
     fn get_header<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
         let data = &self.mmap[..3200];
+        let ext_count = self.b_header.extended_text_header_count;
+        let ext_data: Option<&[u8]> = if ext_count > 0{
+            let d = &self.mmap[3600..3600 + ext_count * 3200];
+            Some(d)
+        } else{
+            None
+        };
         // TODO: Read extended text headers if they exist and add them to return.
 
         // In All Revision standards: textual header is 3200 bytes, padded with:
@@ -114,9 +121,20 @@ impl SegyFile {
         let ascii_buf = if is_ebcdic {
             let mut result = vec![0u8; 3200];
             Ebcdic::ebcdic_to_ascii(data, &mut result, data.len(), true, false);
+
+            if let Some(ext_data) = ext_data {
+                let mut ext_result = vec![0u8; ext_count * 3200];
+                Ebcdic::ebcdic_to_ascii(ext_data, &mut ext_result, ext_data.len(), true, false);
+                result.extend_from_slice(&ext_result);
+            }
             result
+
         } else {
-            data.into()
+            let mut result: Vec<u8> = data.into();
+            if let Some(ext_data) = ext_data {
+                result.extend_from_slice(ext_data);
+            }
+            result
         };
 
         let s = ascii_buf.chunks(80)
