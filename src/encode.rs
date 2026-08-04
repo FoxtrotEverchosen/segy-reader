@@ -7,7 +7,7 @@ use crate::types::{ByteOrder};
 
 // There exists a discrepancy between types stored by the HeaderConfig and types stored by
 // BinaryHeader struct that represent the same data. That is a deliberate decision, since SEGY docs
-// require the data to be encoded as specific data type (majorly i16 with exceptions).
+// require the data to be encoded as specific data type (mainly i16 with exceptions).
 #[pyclass]
 #[derive(Clone, Copy)]
 pub struct BinaryHeaderConfig {
@@ -128,6 +128,7 @@ fn encode_bin_header(conf: BinaryHeaderConfig, writer: &mut BufWriter<File>, byt
     // The byte order indicator is always written in big-endian regardless of the file's byte order
     header[96..100].copy_from_slice(&conf.byte_order.to_be_bytes());
 
+    // Those values are optional. 0x00 written as default
     header[26..28].copy_from_slice(&i16_bytes(conf.ensemble_fold.unwrap_or(0x00)));
     header[28..30].copy_from_slice(&i16_bytes(conf.trace_sorting_code.unwrap_or(0x00)));
     header[54..56].copy_from_slice(&i16_bytes(conf.measurement_system.unwrap_or(0x00)));

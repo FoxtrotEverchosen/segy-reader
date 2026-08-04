@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from pathlib import Path
 
-from fastsegy import SegyFile
+from fastsegy import SegyFile, BinaryHeaderConfig, save_segy
 from fastsegy.gui.plotting import PlotCanvas
 
 from fastsegy.gui.function_dialogs import (
@@ -99,6 +99,7 @@ class App(QMainWindow):
         self.trace_data_shape = None
         self.trace_data_range = None
         self.file_name = None
+        self.file_path = None
         self.setWindowTitle("FastSegy App")
         self.setMinimumSize(1000, 700)
         self.create_menu()
@@ -132,6 +133,7 @@ class App(QMainWindow):
         data_menu.addAction("Get Trace", self.trace_dialog)
         data_menu.addAction("Get Trace Range", self.trace_range_dialog)
         data_menu.addAction("Get Textual Header", self.get_text_header)
+        data_menu.addAction("Save data as file", self.save_data)
 
     def open_file_dialog(self):
         home_dir = str(Path.home())
@@ -140,6 +142,7 @@ class App(QMainWindow):
         if path:
             file_name = Path(path).name
             self.file_name = file_name
+            self.file_path = path
             self.segy_file = SegyFile(path)
             self.metadata = self.segy_file.get_metadata()
             self.populate_data_table()
@@ -150,6 +153,7 @@ class App(QMainWindow):
         self.metadata = None
         self.trace_data = None
         self.file_name = None
+        self.file_path = None
 
         self.data_table.setRowCount(0)
         self.data_table.setRowCount(40)
@@ -375,6 +379,42 @@ class App(QMainWindow):
         dlg = TextHeaderWindow(header_text, self)
         dlg.exec()
 
+    def save_data(self):
+        # FIX: Assert that a file is already loaded, 
+        # FIX: assert that data is loaded as a range. Currently crashes app
+
+        # Data will always be saved as f64
+        DATA_FORMAT = 6
+        BYTES_PER_SAMPLE = 8
+
+        BYTE_ORDER = {
+            "Big Endian":   0x01_02_03_04,
+            "Little Endian":0x04_03_02_01,
+            "Swapped Word": 0x02_01_04_03,
+        }
+
+        conf = BinaryHeaderConfig(
+            self.metadata["Sample Interval"],
+            self.metadata["Samples Per Trace"],
+            6,
+            self.metadata["Revision Standard"],
+            0,
+            BYTE_ORDER.get(self.metadata["Byte Order"]),
+            BYTES_PER_SAMPLE
+        )
+
+        is_ascii = True
+        traces = self.trace_data.T  # undo the transpose done at load time → (n_traces, n_samples)
+        n_traces = traces.shape[0]
+        n_samples = traces.shape[1]
+
+        traces = traces.astype(np.float64)
+        if self.metadata["Byte Order"] == "Big Endian":
+            traces = traces.astype(traces.dtype.newbyteorder('>'))
+
+        save_segy("NewFile.sgy", self.segy_file.get_header(), conf, traces.tobytes(), is_ascii, n_traces, n_samples)
+
+
     def show_error(self, message):
         QMessageBox.critical(self, "FastSegy Error", message)
 
@@ -391,3 +431,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
