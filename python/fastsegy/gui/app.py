@@ -98,6 +98,7 @@ class App(QMainWindow):
         self.sample_interval = None
         self.trace_data_shape = None
         self.trace_data_range = None
+        self.file_name = None
         self.setWindowTitle("FastSegy App")
         self.setMinimumSize(1000, 700)
         self.create_menu()
@@ -137,6 +138,8 @@ class App(QMainWindow):
         path = QFileDialog.getOpenFileName(self, 'Open file', home_dir, filter="SEG-Y files (*.seg *.segy *.sgy)")[0]
 
         if path:
+            file_name = Path(path).name
+            self.file_name = file_name
             self.segy_file = SegyFile(path)
             self.metadata = self.segy_file.get_metadata()
             self.populate_data_table()
@@ -146,6 +149,7 @@ class App(QMainWindow):
         self.segy_file = None
         self.metadata = None
         self.trace_data = None
+        self.file_name = None
 
         self.data_table.setRowCount(0)
         self.data_table.setRowCount(40)
@@ -249,12 +253,15 @@ class App(QMainWindow):
                 self.show_error(str(e))
 
     def populate_data_table(self):
+        self.data_table.setItem(0, 0, QTableWidgetItem("File Name"))
+        self.data_table.setItem(0, 1, QTableWidgetItem(str(self.file_name)))
+
         for i, kv_pair in enumerate(self.metadata.items()):
             if kv_pair[0] == 'Index':
                 continue
 
-            self.data_table.setItem(i, 0, QTableWidgetItem(str(kv_pair[0])))
-            self.data_table.setItem(i, 1, QTableWidgetItem(str(kv_pair[1])))
+            self.data_table.setItem(i+1, 0, QTableWidgetItem(str(kv_pair[0])))
+            self.data_table.setItem(i+1, 1, QTableWidgetItem(str(kv_pair[1])))
 
     def create_layout(self):
         central_widget = QWidget()
