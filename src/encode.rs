@@ -70,7 +70,7 @@ impl BinaryHeaderConfig {
 
 #[pyfunction]
 // takes numpy array
-pub fn save_segy(file_path: &str, textual_header: &str, b_header_config: BinaryHeaderConfig, raw_traces: &[u8], is_ascii: bool, n_traces: usize, n_samples: usize) -> PyResult<()> {
+pub fn save_segy(file_path: &str, textual_header: &str, b_header_config: BinaryHeaderConfig, raw_traces: &[u8], is_ascii: bool, n_traces: usize) -> PyResult<()> {
     // All textual headers are not stored in one place. As per Rev >= 1.0, the main textual header
     // is stored in bytes 1 - 3200. Extended text headers are stored after binary header, i.e. bytes
     // 3600 - N * 3200, where N is the number of extended text headers provided in bin_header
@@ -85,6 +85,8 @@ pub fn save_segy(file_path: &str, textual_header: &str, b_header_config: BinaryH
             return Err(PyErr::new::<PyValueError, _>("End user provided wrong byte_order"));
         }
     };
+
+    let n_samples = b_header_config.samples_per_trace as usize;
 
     // create() truncates file if it exists, informing user of overriding file should be done via GUI window
     let file = File::create(file_path)?;
@@ -184,7 +186,6 @@ fn encode_ext_txt_header(is_ascii: bool, header: &str, writer: &mut BufWriter<Fi
 }
 
 fn encode_traces(conf: BinaryHeaderConfig, raw_traces: &[u8], n_traces: usize, n_samples: usize, writer: &mut BufWriter<File>, byte_order: ByteOrder) -> PyResult<()> {
-    // Number of samples in trace -> bytes 114 - 115 (0-based)
 
     let bytes_per_sample = conf.bytes_per_sample;
     let trace_data_size = n_samples * bytes_per_sample;
@@ -196,11 +197,13 @@ fn encode_traces(conf: BinaryHeaderConfig, raw_traces: &[u8], n_traces: usize, n
     };
 
     let samples_per_trace = i16_bytes(conf.samples_per_trace);
-
+    
     // for each trace:
     for i in 0 .. n_traces {
         // encode trace header (240 bytes)
         let mut buf_header = [0u8; 240];
+
+        // Number of samples in trace -> bytes 114 - 115 (0-based)
         buf_header[114..116].copy_from_slice(&samples_per_trace);
         writer.write_all(&buf_header)?;
 

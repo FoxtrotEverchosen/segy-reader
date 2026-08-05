@@ -32,6 +32,52 @@ from fastsegy.gui.function_dialogs import (
 
 from fastsegy.processing import *
 
+class SaveFileDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Save Data As SEG-Y File")
+        self.setModal(True)
+        self.setMinimumWidth(450)
+
+        layout = QVBoxLayout(self)
+
+        path_label = QLabel("Output file path")
+        layout.addWidget(path_label)
+
+        path_layout = QHBoxLayout()
+        self.path_edit = QLineEdit()
+        self.path_edit.setPlaceholderText("Enter path or use Browse...")
+        browse_btn = QPushButton("Browse")
+        browse_btn.setFixedWidth(80)
+        browse_btn.clicked.connect(self.browse)
+        path_layout.addWidget(self.path_edit)
+        path_layout.addWidget(browse_btn)
+        layout.addLayout(path_layout)
+
+        buttons_layout = QHBoxLayout()
+        ok_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, self)
+        cancel_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel, self)
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(ok_btn)
+        buttons_layout.addWidget(cancel_btn)
+        layout.addLayout(buttons_layout)
+
+        ok_btn.accepted.connect(self.accept)
+        cancel_btn.rejected.connect(self.reject)
+
+    def browse(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save SEG-Y File",
+            str(Path.home()),
+            "SEG-Y files (*.sgy *.segy *.seg)"
+        )
+        if path:
+            self.path_edit.setText(path)
+
+    def get_path(self) -> str:
+        return self.path_edit.text().strip()
+
 
 class FunctionWindow(QDialog):
     def __init__(self, function_name):
@@ -118,8 +164,8 @@ class App(QMainWindow):
         file_menu = QMenu("File", self)
         menubar.addMenu(file_menu)
 
-        file_menu.addAction("Open SEG-Y file", self.open_file_dialog)
-        file_menu.addAction("Close SEG-Y file", self.drop_file)
+        file_menu.addAction("Open SEG-Y File", self.open_file_dialog)
+        file_menu.addAction("Close SEG-Y File", self.drop_file)
 
         # edit_menu = QMenu("Edit", self)
         # menubar.addMenu(edit_menu)
@@ -133,11 +179,11 @@ class App(QMainWindow):
         data_menu.addAction("Get Trace", self.trace_dialog)
         data_menu.addAction("Get Trace Range", self.trace_range_dialog)
         data_menu.addAction("Get Textual Header", self.get_text_header)
-        data_menu.addAction("Save data as file", self.save_data)
+        data_menu.addAction("Save Data Buffer As File", self.save_data)
 
     def open_file_dialog(self):
         home_dir = str(Path.home())
-        path = QFileDialog.getOpenFileName(self, 'Open file', home_dir, filter="SEG-Y files (*.seg *.segy *.sgy)")[0]
+        path = QFileDialog.getOpenFileName(self, 'Open File', home_dir, filter="SEG-Y files (*.seg *.segy *.sgy)")[0]
 
         if path:
             file_name = Path(path).name
@@ -380,13 +426,29 @@ class App(QMainWindow):
         dlg.exec()
 
     def save_data(self):
-        # FIX: Assert that a file is already loaded, 
-        # FIX: assert that data is loaded as a range. Currently crashes app
+        if self.trace_data is None or len(self.trace_data.shape) == 1:
+            self.show_error("You can only save range of data that is currently displayed and in buffer!")
+            return
 
-        # Data will always be saved as f64
+        dialog = SaveFileDialog(self)
+        if not dialog.exec():
+            return
+
+        file_path = dialog.get_path()
+        if not file_path:
+            self.show_warning("No file path provided.")
+            return
+
+        # Ensure extension
+        if not any(file_path.endswith(ext) for ext in (".sgy", ".segy", ".seg")):
+            file_path += ".sgy"
+
+        # Data will always be saved as f64 with text encoded as ASCII, following Revision 1.0
         DATA_FORMAT = 6
         BYTES_PER_SAMPLE = 8
-
+        REVISION_STANDARD = 0x0100
+        IS_ASCII = True
+ 
         BYTE_ORDER = {
             "Big Endian":   0x01_02_03_04,
             "Little Endian":0x04_03_02_01,
@@ -396,14 +458,12 @@ class App(QMainWindow):
         conf = BinaryHeaderConfig(
             self.metadata["Sample Interval"],
             self.metadata["Samples Per Trace"],
-            6,
-            self.metadata["Revision Standard"],
+            DATA_FORMAT,
+            REVISION_STANDARD,
             0,
             BYTE_ORDER.get(self.metadata["Byte Order"]),
             BYTES_PER_SAMPLE
         )
-
-        is_ascii = True
         traces = self.trace_data.T  # undo the transpose done at load time → (n_traces, n_samples)
         n_traces = traces.shape[0]
         n_samples = traces.shape[1]
@@ -412,7 +472,11 @@ class App(QMainWindow):
         if self.metadata["Byte Order"] == "Big Endian":
             traces = traces.astype(traces.dtype.newbyteorder('>'))
 
-        save_segy("NewFile.sgy", self.segy_file.get_header(), conf, traces.tobytes(), is_ascii, n_traces, n_samples)
+        try:
+            save_segy(file_path, self.segy_file.get_header(), conf, traces.tobytes(), IS_ASCII, n_traces)
+            QMessageBox.information(self, "Saved", f"File saved to:\n{file_path}")
+        except Exception as e:
+            self.show_error(f"Failed to save file:\n{e}")
 
 
     def show_error(self, message):
