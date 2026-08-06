@@ -6,8 +6,8 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 
 // There exists a discrepancy between types stored by the HeaderConfig and types stored by
-// BinaryHeader struct that represent the same data. That is a deliberate decision, since SEGY docs
-// require the data to be encoded as specific data type (mainly i16 with exceptions).
+// BinaryHeader struct that represent the same data. That is a deliberate decision, since SEGY
+// standard require the data to be encoded as specific data type (mainly i16 with exceptions).
 #[pyclass]
 #[derive(Clone, Copy)]
 pub struct BinaryHeaderConfig {
@@ -69,7 +69,6 @@ impl BinaryHeaderConfig {
 }
 
 #[pyfunction]
-// takes numpy array
 pub fn save_segy(
     file_path: &str,
     textual_header: &str,
@@ -78,9 +77,9 @@ pub fn save_segy(
     is_ascii: bool,
     n_traces: usize,
 ) -> PyResult<()> {
-    // All textual headers are not stored in one place. As per Rev >= 1.0, the main textual header
+    // Textual headers are not all stored in one place. As per Rev >= 1.0, the main textual header
     // is stored in bytes 1 - 3200. Extended text headers are stored after binary header, i.e. bytes
-    // 3600 - N * 3200, where N is the number of extended text headers provided in bin_header
+    // 3600 - (3600 + N * 3200), where N is the number of extended text headers provided in bin_header
 
     let byte_order: ByteOrder = match b_header_config.byte_order {
         // Older SEG-Y files, following Revision 0 standard encode numbers BigEndian only, therefore
@@ -142,7 +141,7 @@ fn encode_bin_header(
     // The byte order indicator is always written in big-endian regardless of the file's byte order
     header[96..100].copy_from_slice(&conf.byte_order.to_be_bytes());
 
-    // Those values are optional. 0x00 written as default
+    // Those values are optional. Zero-filled by default
     header[26..28].copy_from_slice(&i16_bytes(conf.ensemble_fold.unwrap_or(0x00)));
     header[28..30].copy_from_slice(&i16_bytes(conf.trace_sorting_code.unwrap_or(0x00)));
     header[54..56].copy_from_slice(&i16_bytes(conf.measurement_system.unwrap_or(0x00)));
@@ -179,7 +178,7 @@ fn encode_ext_txt_header(
     let padding = if is_ascii { 0x20u8 } else { 0x40u8 };
 
     for i in 0..ext_header_count {
-        let start = usize::try_from(3120 + i * 3200).expect("This value will never be negative");
+        let start = usize::try_from(3120 + i * 3200).expect("This value should never be negative");
         let end = (start + 3200).min(header.len());
         let slice = &header.as_bytes()[start..end];
 
@@ -220,7 +219,6 @@ fn encode_traces(
 
     let samples_per_trace = i16_bytes(conf.samples_per_trace);
 
-    // for each trace:
     for i in 0..n_traces {
         // encode trace header (240 bytes)
         let mut buf_header = [0u8; 240];
