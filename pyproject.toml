@@ -21,3 +21,6 @@ dev = [
 python-source = "python"
 manifest-path = "Cargo.toml"
 module-name = "fastsegy._fastsegy"
+
+[tool.pyright]
+typeCheckingMode = "basic"

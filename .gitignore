@@ -24,3 +24,5 @@ target/
 *.segy.gz
 *$py.class
 **/.venv/
+2D_poland
+*.part*
