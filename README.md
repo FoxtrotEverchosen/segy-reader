@@ -16,9 +16,10 @@ and memory mapping which carries some overhead in more abstracted languages. The
 - Reads SEG-Y textual headers encoded as ASCII or EBCDIC  
 - Parses binary header to extract key metadata  
 - Handles decoding of data encoded in different formats (IEE754, IBM-float32, signed int etc.)
-- Exposes python bindings via PyO3 for easy integration with Python frontend
+- Exposes Python bindings via PyO3 for easy integration with Python frontend
 - Utilizes memory mapping for performance gains while reading trace data 
 - Supports SEG-Y Rev 0 and Rev 1 files
+- Allows user to save processed data as SEG-Y files
 
 ### GUI
 This codebase contains a GUI built in Python with PyQt6 library. It allows user to easily visualize traces and sections.
@@ -30,21 +31,18 @@ Current version allows users to use **Running Average Filter**, **XY-Median Filt
 Those functionalities are currently implemented in Python. That may change based on performance of more 
 computation heavy algorithms implemented later. 
 
-Changes are stored in memory and do not affect the actual source file. For now, changes cannot be saved.
+Changes are stored in memory and do not affect the actual source file. Applied changes can be saved into new SEG-Y file.
 
 ## Planned Features
-My main goal is to create a usable software allowing user to fully process and analyze seismic SEGY data.
+The main goal for this project was to learn Rust. I did however grow fond of this project and decided to push it further and achieve relatively functional software. My main goal is to create a stable version allowing user to process and analyze seismic SEGY data.
 Current improvement plans include:
 
-- Improvements to file initialization  
-- Handling of newer Revision standards (i.e. 2 and possibly 2.1) 
-- Custom seismic binary container
+- Improvements to file initialization. NOTE:  Windows seems to have issues with memory-mapped file access that results in significantly slower startup times. Resolving this is planned but is currently low priority, as the primary development environment is Linux."
+- Handling of newer Revision standards (i.e. 2 and possibly 2.1). NOTE: Versions 2.0 and 2.1 add some cases that might not be easy to parse. What's more, there seem to be **very** limited amount of data actually using that Revision standards. For this reason I might give up on supporting them for now  
 - Rendering optimizations (current Matplotlib bottleneck)
 - More customizable GUI
 - Improvements to UX
 - More processing functionalities
-- Options to save processed sections as SEG-Y file
-- Option to load said processed files
 - Addition of a manual with accurate descriptions of functions, their practical use and other functionalities of GUI
 - Add an executable to skip the building steps
 
@@ -54,7 +52,7 @@ Access to free seismic data is possible via [seg wikipedia](https://wiki.seg.org
 
 ## Installation
 This project uses [Maturin](https://github.com/PyO3/maturin) to build and install the Rust-based Python extension.
-For the time being, you have to install all python libraries and Rust tools manually.
+For the time being, you have to install all Python libraries and Rust tools manually. That will be improved in future with pip-installable wheel/installer/.exe 
 
 Make sure you have the following installed:
 
@@ -62,7 +60,7 @@ Make sure you have the following installed:
 - [Rust toolchain](https://www.rust-lang.org/tools/install)
 - pip
 
-Create a virtual environment and install the following python libraries:
+Create a virtual environment and install the following Python libraries:
 - Maturin
 - Matplotlib
 - Numpy
@@ -79,12 +77,12 @@ Make sure your virtual environment is activated before running `maturin develop`
 
 **On Linux**, you may need to install build tools, but the project should work same as on Windows:
 
-`sudo apt install python3-dev build-essential`
+`sudo apt install Python3-dev build-essential`
 
-To run the GUI you want to run the app.py script located in python/fastsegy/gui/app.py.
+To run the GUI you want to run the app.py script located in Python/fastsegy/gui/app.py.
 Assuming that you have installed the libraries globally or activated a virtual environment, you could run the following command in console from the project root directory:
 
-`python python/fastsegy/gui/app.py`
+`Python Python/fastsegy/gui/app.py`
 
 ## Preview (Kerry3D used as input data - accessible through segy wiki)
 **Please note, that the rendered UI might differ based on your OS or (in case of Linux) Desktop Environment you are using. 
