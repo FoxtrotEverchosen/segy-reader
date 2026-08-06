@@ -33,11 +33,11 @@ from fastsegy.gui.function_dialogs import (
 from fastsegy.processing import *
 
 class SaveFileDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, header_text: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Save Data As SEG-Y File")
         self.setModal(True)
-        self.setMinimumWidth(450)
+        self.setMinimumWidth(500)
 
         layout = QVBoxLayout(self)
 
@@ -53,6 +53,20 @@ class SaveFileDialog(QDialog):
         path_layout.addWidget(self.path_edit)
         path_layout.addWidget(browse_btn)
         layout.addLayout(path_layout)
+
+        header_label = QLabel("Textual header (editable)")
+        layout.addWidget(header_label)
+
+        self.header_edit = QTextEdit()
+        self.header_edit.setPlaceholderText("Textual header...")
+        self.header_edit.setText(header_text)
+        self.header_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        # ~80 chars wide using monospace font so char width is predictable
+        self.header_edit.setFontFamily("Monospace")
+        font_metrics = self.header_edit.fontMetrics()
+        self.header_edit.setFixedWidth(font_metrics.averageCharWidth() * 84)  # 80 chars + padding
+        self.header_edit.setMinimumHeight(200)
+        layout.addWidget(self.header_edit)
 
         buttons_layout = QHBoxLayout()
         ok_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, self)
@@ -77,6 +91,9 @@ class SaveFileDialog(QDialog):
 
     def get_path(self) -> str:
         return self.path_edit.text().strip()
+
+    def get_header(self) -> str:
+        return self.header_edit.toPlainText()
 
 
 class FunctionWindow(QDialog):
@@ -430,7 +447,7 @@ class App(QMainWindow):
             self.show_error("You can only save range of data that is currently displayed and in buffer!")
             return
 
-        dialog = SaveFileDialog(self)
+        dialog = SaveFileDialog(self.segy_file.get_header(), self)
         if not dialog.exec():
             return
 
@@ -442,6 +459,8 @@ class App(QMainWindow):
         # Ensure extension
         if not any(file_path.endswith(ext) for ext in (".sgy", ".segy", ".seg")):
             file_path += ".sgy"
+
+        textual_header = dialog.get_header().replace("\n", "")
 
         # Data will always be saved as f64 with text encoded as ASCII, following Revision 1.0
         DATA_FORMAT = 6
@@ -473,7 +492,7 @@ class App(QMainWindow):
             traces = traces.astype(traces.dtype.newbyteorder('>'))
 
         try:
-            save_segy(file_path, self.segy_file.get_header(), conf, traces.tobytes(), IS_ASCII, n_traces)
+            save_segy(file_path, textual_header, conf, traces.tobytes(), IS_ASCII, n_traces)
             QMessageBox.information(self, "Saved", f"File saved to:\n{file_path}")
         except Exception as e:
             self.show_error(f"Failed to save file:\n{e}")

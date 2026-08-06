@@ -109,7 +109,6 @@ impl SegyFile {
         } else {
             None
         };
-        // TODO: Read extended text headers if they exist and add them to return.
 
         // In All Revision standards: textual header is 3200 bytes, padded with:
         // - 0x40 (EBCDIC space) for EBCDIC encoding
@@ -183,7 +182,6 @@ impl SegyFile {
     }
 
     fn build_trace_index(b_header: &BinaryHeader, mmap: &Mmap) -> (u64, Vec<u64>) {
-        // TODO: deleted unnecessary wrapping in result??
         // Samples per trace read from binary header might not be correct for older data
         // Hence it might(?) be necessary to walk through whole file and count traces manually
         let mut trace_index: Vec<u64> = Vec::new();
@@ -337,7 +335,6 @@ impl SegyFile {
 
 #[allow(clippy::match_same_arms)]
 pub fn trace_to_numpy(py: Python, trace: TraceData) -> Bound<PyAny> {
-    // TODO: deleted unnecessary wrapping in result??
     macro_rules! convert {
         ($v:expr) => {
             $v.into_pyarray(py).into_any()
