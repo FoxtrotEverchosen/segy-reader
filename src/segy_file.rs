@@ -1,17 +1,21 @@
-use std::fs::File;
-use std::io::ErrorKind::InvalidInput;
 use ebcdic::ebcdic::Ebcdic;
 use memmap2::{Mmap, MmapOptions};
-use pyo3::{pyclass, pymethods, Bound, PyAny, PyResult, Python};
-use pyo3::exceptions::{PyIOError, PyTypeError, PyValueError};
-use pyo3::types::{PyDict, PyString};
-use pyo3::prelude::{PyDictMethods};
-use sysinfo::System;
 use numpy::{IntoPyArray, PyArray2};
+use pyo3::exceptions::{PyIOError, PyTypeError, PyValueError};
+use pyo3::prelude::PyDictMethods;
+use pyo3::types::{PyDict, PyString};
+use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
+use std::fs::File;
+use std::io::ErrorKind::InvalidInput;
+use sysinfo::System;
 
+use crate::decode::{
+    decode_i8_trace, decode_i16_trace, decode_i24_trace, decode_i32_trace, decode_i64_trace, decode_ibm_trace,
+    decode_ieef32_trace, decode_ieef64_trace, decode_u8_trace, decode_u16_trace, decode_u24_trace, decode_u32_trace,
+    decode_u64_trace,
+};
+use crate::header::{BinaryHeader, HeaderReader, parse_binary_header};
 use crate::types::{ByteOrder, DataFormat, SegyError, TraceData};
-use crate::decode::{decode_ibm_trace, decode_ieef32_trace, decode_ieef64_trace, decode_i8_trace, decode_i16_trace, decode_i24_trace, decode_i32_trace, decode_i64_trace, decode_u8_trace, decode_u16_trace, decode_u24_trace, decode_u32_trace, decode_u64_trace};
-use crate::header::{parse_binary_header, BinaryHeader, HeaderReader};
 
 macro_rules! build_array {
     ($py:expr, $traces:expr, $variant:path, $T:ty) => {{
@@ -26,7 +30,7 @@ macro_rules! build_array {
 }
 
 #[pyclass]
-pub struct SegyFile{
+pub struct SegyFile {
     b_header: BinaryHeader,
     trace_index: Vec<u64>,
     mmap: Mmap,
@@ -42,7 +46,7 @@ impl SegyFile {
     }
 
     fn get_trace<'py>(&self, py: Python<'py>, trace_number: u32) -> PyResult<Bound<'py, PyAny>> {
-        let trace = match self.get_trace_data(trace_number){
+        let trace = match self.get_trace_data(trace_number) {
             Ok(t) => t,
             Err(e) if e.kind() == "IO" => return Err(PyIOError::new_err(e.to_string())),
             Err(e) => return Err(PyValueError::new_err(e.to_string())),
@@ -51,12 +55,7 @@ impl SegyFile {
         Ok(trace_to_numpy(py, trace))
     }
 
-    fn get_trace_range<'py>(
-        &self,
-        py: Python<'py>,
-        start: u32,
-        end: u32,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn get_trace_range<'py>(&self, py: Python<'py>, start: u32, end: u32) -> PyResult<Bound<'py, PyAny>> {
         let traces = self
             .get_trace_range_data(start, end)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -104,10 +103,10 @@ impl SegyFile {
     fn get_header<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
         let data = &self.mmap[..3200];
         let ext_count = self.b_header.extended_text_header_count;
-        let ext_data: Option<&[u8]> = if ext_count > 0{
+        let ext_data: Option<&[u8]> = if ext_count > 0 {
             let d = &self.mmap[3600..3600 + ext_count * 3200];
             Some(d)
-        } else{
+        } else {
             None
         };
         // TODO: Read extended text headers if they exist and add them to return.
@@ -128,7 +127,6 @@ impl SegyFile {
                 result.extend_from_slice(&ext_result);
             }
             result
-
         } else {
             let mut result: Vec<u8> = data.into();
             if let Some(ext_data) = ext_data {
@@ -137,7 +135,8 @@ impl SegyFile {
             result
         };
 
-        let s = ascii_buf.chunks(80)
+        let s = ascii_buf
+            .chunks(80)
             .map(|line| std::str::from_utf8(line))
             .collect::<Result<Vec<_>, _>>()?
             .join("\n");
@@ -146,8 +145,8 @@ impl SegyFile {
     }
 }
 
-impl SegyFile{
-    fn open_segy(path: &str) -> PyResult<Self>{
+impl SegyFile {
+    fn open_segy(path: &str) -> PyResult<Self> {
         // SAFETY:
         // As per memmap2 documentation All file-backed memory map constructors are marked unsafe
         // because of the potential for Undefined Behavior (UB) using the map if the underlying file
@@ -160,12 +159,10 @@ impl SegyFile{
         // during the lifetime of this `SegyFile`.
 
         let file = File::open(path)?;
-        let mmap = unsafe {
-            MmapOptions::new().map(&file)?
-        };
-        let b_header = match parse_binary_header(&mmap[3200..3600]){
+        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        let b_header = match parse_binary_header(&mmap[3200..3600]) {
             Ok(h) => h,
-            Err(e) => return Err(PyIOError::new_err(format!("Failed to open file: {e}")))
+            Err(e) => return Err(PyIOError::new_err(format!("Failed to open file: {e}"))),
         };
         let (trace_count, trace_index) = Self::build_trace_index(&b_header, &mmap);
 
@@ -176,7 +173,13 @@ impl SegyFile{
         // not represent the current state of the system accordingly.
         let available_mem = sys.available_memory();
 
-        Ok(Self{b_header, trace_index, mmap, trace_count, available_mem})
+        Ok(Self {
+            b_header,
+            trace_index,
+            mmap,
+            trace_count,
+            available_mem,
+        })
     }
 
     fn build_trace_index(b_header: &BinaryHeader, mmap: &Mmap) -> (u64, Vec<u64>) {
@@ -188,11 +191,12 @@ impl SegyFile{
 
         //text header 3200, bin header 400
         let mut offset = 3600 + b_header.extended_text_header_count * 3200;
-        while offset + 240 < mmap.len(){
+        while offset + 240 < mmap.len() {
             let reader = HeaderReader::new(&mmap[offset..offset + 240], 0, b_header.byte_order);
 
             // This reads sample count from TRACE header, which *should* be more accurate
-            let samples_in_trace = usize::try_from(reader.read_i16(115)).expect("Sample count in trace cannot be negative");
+            let samples_in_trace =
+                usize::try_from(reader.read_i16(115)).expect("Sample count in trace cannot be negative");
             let samples = if samples_in_trace == 0 {
                 b_header.samples_per_trace
             } else {
@@ -200,7 +204,7 @@ impl SegyFile{
             };
 
             let data_bytes = 240 + samples * b_header.bytes_per_sample;
-            if offset + data_bytes > mmap.len(){
+            if offset + data_bytes > mmap.len() {
                 break;
             }
 
@@ -222,7 +226,10 @@ impl SegyFile{
         }
 
         // Most files should not include more than 2^16 traces. In rare cases that value could reach up to 2^32 as per SEG-Y documentation
-        if trace_number > u32::try_from(trace_index.len()).expect("It should be impossible for file to contain more than 2^32 traces") {
+        if trace_number
+            > u32::try_from(trace_index.len())
+                .expect("It should be impossible for file to contain more than 2^32 traces")
+        {
             return Err(SegyError::TraceOutOfRange {
                 requested: trace_number,
                 trace_count: self.trace_index.len(),
@@ -244,20 +251,20 @@ impl SegyFile{
 
         let data_bytes = samples * b_header.bytes_per_sample;
         let data_start = trace_start + 240;
-        let raw_buf = &self.mmap[data_start .. data_start + data_bytes];
+        let raw_buf = &self.mmap[data_start..data_start + data_bytes];
         let trace: TraceData = Self::decode_trace(b_header, byte_order, raw_buf)?;
 
         Ok(trace)
     }
 
-    fn get_trace_range_data(&self, start: u32, end: u32) -> Result<Vec<TraceData>, SegyError>{
+    fn get_trace_range_data(&self, start: u32, end: u32) -> Result<Vec<TraceData>, SegyError> {
         let trace_index = &self.trace_index;
         let b_header = &self.b_header;
 
         if start >= end {
             return Err(SegyError::Io(std::io::Error::new(
                 InvalidInput,
-                "Starting index must be lower than ending index"
+                "Starting index must be lower than ending index",
             )));
         }
         if start == 0 || end as usize > trace_index.len() {
@@ -288,8 +295,8 @@ impl SegyFile{
                     .expect("mmap would have failed before offset exceeds usize::MAX");
 
                 let reader = HeaderReader::new(&self.mmap[trace_start..trace_start + 240], 0, b_header.byte_order);
-                let samples_in_trace = usize::try_from(reader.read_i16(115))
-                    .expect("samples in trace cannot be negative");
+                let samples_in_trace =
+                    usize::try_from(reader.read_i16(115)).expect("samples in trace cannot be negative");
 
                 let samples = if samples_in_trace == 0 {
                     b_header.samples_per_trace
@@ -332,21 +339,23 @@ impl SegyFile{
 pub fn trace_to_numpy(py: Python, trace: TraceData) -> Bound<PyAny> {
     // TODO: deleted unnecessary wrapping in result??
     macro_rules! convert {
-        ($v:expr) => { $v.into_pyarray(py).into_any() };
+        ($v:expr) => {
+            $v.into_pyarray(py).into_any()
+        };
     }
 
     match trace {
-        TraceData::F32(v)  => convert!(v),
-        TraceData::F64(v)  => convert!(v),
-        TraceData::I8(v)   => convert!(v),
-        TraceData::I16(v)  => convert!(v),
-        TraceData::I24(v)  => convert!(v),
-        TraceData::I32(v)  => convert!(v),
-        TraceData::I64(v)  => convert!(v),
-        TraceData::U8(v)   => convert!(v),
-        TraceData::U16(v)  => convert!(v),
-        TraceData::U24(v)  => convert!(v),
-        TraceData::U32(v)  => convert!(v),
-        TraceData::U64(v)  => convert!(v),
+        TraceData::F32(v) => convert!(v),
+        TraceData::F64(v) => convert!(v),
+        TraceData::I8(v) => convert!(v),
+        TraceData::I16(v) => convert!(v),
+        TraceData::I24(v) => convert!(v),
+        TraceData::I32(v) => convert!(v),
+        TraceData::I64(v) => convert!(v),
+        TraceData::U8(v) => convert!(v),
+        TraceData::U16(v) => convert!(v),
+        TraceData::U24(v) => convert!(v),
+        TraceData::U32(v) => convert!(v),
+        TraceData::U64(v) => convert!(v),
     }
 }

@@ -1,9 +1,9 @@
-use std::fs::{File};
-use std::io::{BufWriter, Write};
+use crate::types::ByteOrder;
 use ebcdic::ebcdic::Ebcdic;
-use pyo3::{pyclass, pyfunction, pymethods, PyErr, PyResult};
 use pyo3::exceptions::PyValueError;
-use crate::types::{ByteOrder};
+use pyo3::{PyErr, PyResult, pyclass, pyfunction, pymethods};
+use std::fs::File;
+use std::io::{BufWriter, Write};
 
 // There exists a discrepancy between types stored by the HeaderConfig and types stored by
 // BinaryHeader struct that represent the same data. That is a deliberate decision, since SEGY docs
@@ -13,28 +13,27 @@ use crate::types::{ByteOrder};
 pub struct BinaryHeaderConfig {
     // Mandatory fields             // byte location (0-based) in 400 byte wide header
     #[pyo3(get, set)]
-    sample_interval: i16,           // 16-17
+    sample_interval: i16, // 16-17
     #[pyo3(get, set)]
-    samples_per_trace: i16,         // 20-21
+    samples_per_trace: i16, // 20-21
     #[pyo3(get, set)]
-    data_format: i16,               // 24-25
+    data_format: i16, // 24-25
     #[pyo3(get, set)]
-    revision_number: i16,           // 300-301
+    revision_number: i16, // 300-301
     #[pyo3(get, set)]
-    fixed_length: i16,              // 302-303
+    fixed_length: i16, // 302-303
     #[pyo3(get, set)]
-    byte_order: u32,                // 97-300
+    byte_order: u32, // 97-300
     #[pyo3(get, set)]
-    bytes_per_sample: usize,        // not encoded
-
+    bytes_per_sample: usize, // not encoded
 
     // Highly recommended fields
     #[pyo3(get, set)]
-    ensemble_fold: Option<i16>,     // 26-27
+    ensemble_fold: Option<i16>, // 26-27
     #[pyo3(get, set)]
-    trace_sorting_code: Option<i16>,// 28-29
+    trace_sorting_code: Option<i16>, // 28-29
     #[pyo3(get, set)]
-    measurement_system: Option<i16>,// 54-55
+    measurement_system: Option<i16>, // 54-55
 }
 
 #[pymethods]
@@ -42,17 +41,18 @@ impl BinaryHeaderConfig {
     #[new]
     #[pyo3(signature = (sample_interval, samples_per_trace, data_format, revision_number, fixed_length, byte_order, bytes_per_sample, ensemble_fold=None, measurement_system=None, trace_sorting_code=None))]
     #[allow(clippy::too_many_arguments)]
-    fn new(sample_interval: i16,
-           samples_per_trace: i16,
-           data_format: i16,
-           revision_number: i16,
-           fixed_length: i16,
-           byte_order: u32,
-           bytes_per_sample: usize,
-           ensemble_fold: Option<i16>,
-           measurement_system: Option<i16>,
-           trace_sorting_code: Option<i16>) -> Self
-    {
+    fn new(
+        sample_interval: i16,
+        samples_per_trace: i16,
+        data_format: i16,
+        revision_number: i16,
+        fixed_length: i16,
+        byte_order: u32,
+        bytes_per_sample: usize,
+        ensemble_fold: Option<i16>,
+        measurement_system: Option<i16>,
+        trace_sorting_code: Option<i16>,
+    ) -> Self {
         BinaryHeaderConfig {
             sample_interval,
             samples_per_trace,
@@ -70,7 +70,14 @@ impl BinaryHeaderConfig {
 
 #[pyfunction]
 // takes numpy array
-pub fn save_segy(file_path: &str, textual_header: &str, b_header_config: BinaryHeaderConfig, raw_traces: &[u8], is_ascii: bool, n_traces: usize) -> PyResult<()> {
+pub fn save_segy(
+    file_path: &str,
+    textual_header: &str,
+    b_header_config: BinaryHeaderConfig,
+    raw_traces: &[u8],
+    is_ascii: bool,
+    n_traces: usize,
+) -> PyResult<()> {
     // All textual headers are not stored in one place. As per Rev >= 1.0, the main textual header
     // is stored in bytes 1 - 3200. Extended text headers are stored after binary header, i.e. bytes
     // 3600 - N * 3200, where N is the number of extended text headers provided in bin_header
@@ -111,11 +118,16 @@ pub fn save_segy(file_path: &str, textual_header: &str, b_header_config: BinaryH
     Ok(())
 }
 
-fn encode_bin_header(conf: BinaryHeaderConfig, writer: &mut BufWriter<File>, byte_order: ByteOrder, ext_header_count: i16) -> Result<(), PyErr> {
-    let mut header = vec![0u8;400];
+fn encode_bin_header(
+    conf: BinaryHeaderConfig,
+    writer: &mut BufWriter<File>,
+    byte_order: ByteOrder,
+    ext_header_count: i16,
+) -> Result<(), PyErr> {
+    let mut header = vec![0u8; 400];
 
     let i16_bytes = |v: i16| match byte_order {
-        ByteOrder::BigEndian    => v.to_be_bytes(),
+        ByteOrder::BigEndian => v.to_be_bytes(),
         // for 16-bit le is equivalent to swapped word
         ByteOrder::LittleEndian | ByteOrder::SwappedWord => v.to_le_bytes(),
     };
@@ -139,13 +151,13 @@ fn encode_bin_header(conf: BinaryHeaderConfig, writer: &mut BufWriter<File>, byt
     Ok(())
 }
 
-fn encode_txt_header(is_ascii: bool, header: &str, writer: &mut BufWriter<File>) -> Result<(), PyErr>{
+fn encode_txt_header(is_ascii: bool, header: &str, writer: &mut BufWriter<File>) -> Result<(), PyErr> {
     let padding = if is_ascii { 0x20u8 } else { 0x40u8 };
     let mut buf = [padding; 3200];
 
-    let src = if is_ascii{
+    let src = if is_ascii {
         header.as_bytes().to_vec()
-    }else{
+    } else {
         let mut ebcdic = vec![0u8; header.len()];
         Ebcdic::ascii_to_ebcdic(header.as_bytes(), &mut ebcdic, header.len(), true);
         ebcdic
@@ -158,20 +170,24 @@ fn encode_txt_header(is_ascii: bool, header: &str, writer: &mut BufWriter<File>)
     Ok(())
 }
 
-fn encode_ext_txt_header(is_ascii: bool, header: &str, writer: &mut BufWriter<File>, ext_header_count: i16) -> Result<(), PyErr>{
+fn encode_ext_txt_header(
+    is_ascii: bool,
+    header: &str,
+    writer: &mut BufWriter<File>,
+    ext_header_count: i16,
+) -> Result<(), PyErr> {
     let padding = if is_ascii { 0x20u8 } else { 0x40u8 };
 
-    for i in 0 ..ext_header_count{
-        let start = usize::try_from(3120 + i * 3200)
-            .expect("This value will never be negative");
+    for i in 0..ext_header_count {
+        let start = usize::try_from(3120 + i * 3200).expect("This value will never be negative");
         let end = (start + 3200).min(header.len());
         let slice = &header.as_bytes()[start..end];
 
         let mut buf = [padding; 3200];
 
-        let src = if is_ascii{
+        let src = if is_ascii {
             slice.to_vec()
-        }else{
+        } else {
             let mut ebcdic = vec![padding; 3200];
             Ebcdic::ascii_to_ebcdic(slice, &mut ebcdic, slice.len(), true);
             ebcdic
@@ -185,21 +201,27 @@ fn encode_ext_txt_header(is_ascii: bool, header: &str, writer: &mut BufWriter<Fi
     Ok(())
 }
 
-fn encode_traces(conf: BinaryHeaderConfig, raw_traces: &[u8], n_traces: usize, n_samples: usize, writer: &mut BufWriter<File>, byte_order: ByteOrder) -> PyResult<()> {
-
+fn encode_traces(
+    conf: BinaryHeaderConfig,
+    raw_traces: &[u8],
+    n_traces: usize,
+    n_samples: usize,
+    writer: &mut BufWriter<File>,
+    byte_order: ByteOrder,
+) -> PyResult<()> {
     let bytes_per_sample = conf.bytes_per_sample;
     let trace_data_size = n_samples * bytes_per_sample;
 
     let i16_bytes = |v: i16| match byte_order {
-        ByteOrder::BigEndian    => v.to_be_bytes(),
+        ByteOrder::BigEndian => v.to_be_bytes(),
         // for 16-bit le is equivalent to swapped word
         ByteOrder::LittleEndian | ByteOrder::SwappedWord => v.to_le_bytes(),
     };
 
     let samples_per_trace = i16_bytes(conf.samples_per_trace);
-    
+
     // for each trace:
-    for i in 0 .. n_traces {
+    for i in 0..n_traces {
         // encode trace header (240 bytes)
         let mut buf_header = [0u8; 240];
 

@@ -1,7 +1,7 @@
 use crate::types::{ByteOrder, DataFormat, DimensionalityType, EnvironmentType, LayoutType, SegyError};
 
 #[derive(Debug)]
-pub struct BinaryHeader{
+pub struct BinaryHeader {
     pub sample_interval: i16,
     pub samples_per_trace: usize,
     pub bytes_per_sample: usize,
@@ -31,7 +31,7 @@ pub fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         [0x02, 0x01, 0x04, 0x03] => ByteOrder::SwappedWord,
         _ => {
             return Err(SegyError::UnsupportedDataFormat);
-        },
+        }
     };
 
     let reader = HeaderReader::new(buf, 3200, byte_order);
@@ -50,16 +50,16 @@ pub fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
 
     // As per the SEG-Y documentation this field could store -1 to represent variable number of ext. headers.
     // For now, the variable number of ext. textual headers will throw error
-    let extended_text_header_count = usize::try_from(reader.read_i16(3505))
-        .map_err(|_| SegyError::UnsupportedDataFormat)?;
+    let extended_text_header_count =
+        usize::try_from(reader.read_i16(3505)).map_err(|_| SegyError::UnsupportedDataFormat)?;
 
-    let bytes_per_sample: usize = match data_format{
+    let bytes_per_sample: usize = match data_format {
         8 | 16 => 1,
         3 | 11 => 2,
         7 | 15 => 3,
         1 | 2 | 4 | 5 | 10 => 4,
         6 | 9 | 12 => 8,
-        _ => return Err(SegyError::UnsupportedDataFormat)
+        _ => return Err(SegyError::UnsupportedDataFormat),
     };
 
     // Can be zero -> guaranteed(?) no data trailers
@@ -67,7 +67,7 @@ pub fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
     let first_trace_offset = reader.read_u64(3521);
     let fixed_length = reader.read_i16(3503);
 
-    let data_format = match data_format{
+    let data_format = match data_format {
         1 => DataFormat::IBMf32,
         2 => DataFormat::I32,
         3 => DataFormat::I16,
@@ -82,7 +82,7 @@ pub fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         12 => DataFormat::U64,
         15 => DataFormat::U24,
         16 => DataFormat::U8,
-        _ => return Err(SegyError::UnsupportedDataFormat)
+        _ => return Err(SegyError::UnsupportedDataFormat),
     };
 
     let survey_type = reader.read_i16(3511);
@@ -108,12 +108,12 @@ pub fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
         256 => LayoutType::CrossSpread,
         512 => LayoutType::Patches,
         1024 => LayoutType::TowedStreamer,
-        1152  => LayoutType::OceanBottomSensors,
+        1152 => LayoutType::OceanBottomSensors,
         1280 => LayoutType::PseudoRandomSensor,
         _ => LayoutType::Unspecified,
     };
 
-    Ok(BinaryHeader{
+    Ok(BinaryHeader {
         sample_interval,
         samples_per_trace,
         bytes_per_sample,
@@ -130,18 +130,18 @@ pub fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
     })
 }
 
-pub struct HeaderReader<'a>{
+pub struct HeaderReader<'a> {
     buf: &'a [u8],
-    base :usize,
+    base: usize,
     order: ByteOrder,
 }
 
-impl<'a> HeaderReader<'a>{
-    pub(crate) fn new(buf :&'a [u8], base :usize, order: ByteOrder) ->Self{
-        Self {buf, base, order}
+impl<'a> HeaderReader<'a> {
+    pub(crate) fn new(buf: &'a [u8], base: usize, order: ByteOrder) -> Self {
+        Self { buf, base, order }
     }
 
-    fn offset(&self, doc_byte: usize) -> usize{
+    fn offset(&self, doc_byte: usize) -> usize {
         // SEG-Y documentation presents parameters of headers as list of bytes-meaning pairs. Bytes
         // presented in docs are 1-based. Self.base represents number of byte that starts the header.
         // In case of binary header (assuming no record tape) that value would be 3200.
@@ -154,24 +154,27 @@ impl<'a> HeaderReader<'a>{
         self.buf[ofs]
     }
 
-    pub(crate) fn read_i16(&self, doc_byte: usize) -> i16{
+    pub(crate) fn read_i16(&self, doc_byte: usize) -> i16 {
         let ofs = self.offset(doc_byte);
         let bytes = [self.buf[ofs], self.buf[ofs + 1]];
-        match self.order{
+        match self.order {
             ByteOrder::BigEndian => i16::from_be_bytes(bytes),
             ByteOrder::LittleEndian => i16::from_le_bytes(bytes),
             ByteOrder::SwappedWord => i16::from_be_bytes([bytes[1], bytes[0]]),
         }
     }
 
-    fn read_u64(&self, doc_byte: usize) -> u64{
+    fn read_u64(&self, doc_byte: usize) -> u64 {
         let ofs = self.offset(doc_byte);
-        let bytes = self.buf[ofs .. ofs + 8].try_into().expect("Conversion to 8 element array should never fail");
-        match self.order{
+        let bytes = self.buf[ofs..ofs + 8]
+            .try_into()
+            .expect("Conversion to 8 element array should never fail");
+        match self.order {
             ByteOrder::BigEndian => u64::from_be_bytes(bytes),
             ByteOrder::LittleEndian => u64::from_le_bytes(bytes),
-            ByteOrder::SwappedWord => u64::from_be_bytes([bytes[1], bytes[0], bytes[3], bytes[2],
-                bytes[5], bytes[4], bytes[7], bytes[6]]),
+            ByteOrder::SwappedWord => u64::from_be_bytes([
+                bytes[1], bytes[0], bytes[3], bytes[2], bytes[5], bytes[4], bytes[7], bytes[6],
+            ]),
         }
     }
 }

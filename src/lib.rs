@@ -1,14 +1,14 @@
 #![warn(clippy::pedantic)]
 
-mod types;
 mod decode;
-mod segy_file;
-mod header;
 mod encode;
+mod header;
+mod segy_file;
+mod types;
 
-use pyo3::prelude::*;
 use crate::encode::{BinaryHeaderConfig, save_segy};
 use crate::segy_file::SegyFile;
+use pyo3::prelude::*;
 
 #[pymodule]
 fn _fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
