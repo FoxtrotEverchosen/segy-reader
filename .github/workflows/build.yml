@@ -33,7 +33,9 @@ jobs:
         run: pip install maturin "nuitka[onefile]" numpy matplotlib scipy pyqt6
 
       - name: Build and install Rust extension
-        run: maturin develop --release
+        run: |
+          maturin build --release
+          pip install target/wheels/*.whl
 
       - name: Verify extension is importable
         run: python -c "import fastsegy; print('fastsegy OK')"
