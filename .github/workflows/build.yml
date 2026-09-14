@@ -3,11 +3,20 @@ name: Build Release Executable
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            output: segy-reader
+          - os: windows-latest
+            output: segy-reader.exe
+
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -18,16 +27,18 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install system dependencies
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             patchelf \
-            upx \
             libgl1 \
+            libegl1 \
             libglib2.0-0 \
             libdbus-1-3 \
-            libxcb-cursor0
+            libxcb-cursor0 \
+            libxkbcommon0
 
       - name: Install Python dependencies
         run: pip install maturin "nuitka[onefile]" numpy matplotlib scipy pyqt6
@@ -35,12 +46,10 @@ jobs:
       - name: Build and install Rust extension
         run: |
           maturin build --release
-          pip install target/wheels/*.whl
+          pip install --find-links target/wheels fastsegy
 
-      - name: Verify extension is importable
-        run: python -c "import fastsegy; print('fastsegy OK')"
-
-      - name: Build executable
+      - name: Build executable (Linux)
+        if: runner.os == 'Linux'
         run: |
           python -m nuitka \
             --onefile \
@@ -56,7 +65,26 @@ jobs:
             --output-filename=segy-reader \
             python/fastsegy/gui/app.py
 
+      - name: Build executable (Windows)
+        if: runner.os == 'Windows'
+        env:
+          NUITKA_DOWNLOAD_DEPENDENCY_WALKER: yes
+        run: |
+          python -m nuitka `
+            --onefile `
+            --assume-yes-for-downloads `
+            --enable-plugin=pyqt6 `
+            --include-package=fastsegy `
+            --lto=yes `
+            --python-flag=no_site,no_docstrings `
+            --noinclude-pytest-mode=nofollow `
+            --noinclude-setuptools-mode=nofollow `
+            --noinclude-unittest-mode=nofollow `
+            --include-qt-plugins=sensible `
+            --output-filename=segy-reader `
+            python/fastsegy/gui/app.py
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: segy-reader
+          files: ${{ matrix.output }}
