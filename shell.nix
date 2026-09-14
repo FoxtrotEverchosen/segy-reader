@@ -18,8 +18,9 @@ pkgs.mkShell {
     if [ ! -d .venv ] || ! .venv/bin/python --version &>/dev/null; then
       echo "Recreating .venv..."
       rm -rf .venv
-      python -m venv .venv
+      python -m venv .venv --system-site-packages
     fi
     source .venv/bin/activate
+    maturin develop --release
   '';
 }
