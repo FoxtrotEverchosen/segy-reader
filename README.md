@@ -44,13 +44,14 @@ Current improvement plans include:
 - Improvements to UX
 - More processing functionalities
 - Addition of a manual with accurate descriptions of functions, their practical use and other functionalities of GUI
-- Add an executable to skip the building steps
 
 ## SEGY data source
 
 Access to free seismic data is possible via [seg wikipedia](https://wiki.seg.org/wiki/Open_data)
 
 ## Installation
+An executable can be downloaded from [releases tab](https://github.com/FoxtrotEverchosen/segy-reader/releases), containing an executable for Windows and Linux.
+
 This project uses [Maturin](https://github.com/PyO3/maturin) to build and install the Rust-based Python extension.
 For the time being, you have to install all Python libraries and Rust tools manually. That will be improved in future with pip-installable wheel/installer/.exe 
 
