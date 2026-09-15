@@ -10,9 +10,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-22.04
-            output: segy-reader
+            output: segy-reader-linux
           - os: windows-latest
-            output: segy-reader.exe
+            output: segy-reader-windows.exe
 
     runs-on: ${{ matrix.os }}
     permissions:
