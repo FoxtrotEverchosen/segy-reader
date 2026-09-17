@@ -14,6 +14,8 @@ pkgs.mkShell {
     pytest
   ]);
 
+  NIX_ENFORCE_PURITY = "0";
+
   shellHook = ''
     if [ ! -d .venv ] || ! .venv/bin/python --version &>/dev/null; then
       echo "Recreating .venv..."
