@@ -5,6 +5,9 @@ pkgs.mkShell {
     pkgs.maturin
     pkgs.cargo
     pkgs.rustc
+    pkgs.clippy
+    pkgs.rust-analyzer
+    pkgs.rustfmt
   ] ++ (with pkgs.python3Packages; [
     pip
     matplotlib
@@ -15,6 +18,7 @@ pkgs.mkShell {
   ]);
 
   NIX_ENFORCE_PURITY = "0";
+  RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
 
   shellHook = ''
     if [ ! -d .venv ] || ! .venv/bin/python --version &>/dev/null; then
