@@ -19,7 +19,7 @@ pub struct BinaryHeader {
 
 pub fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
     const ENVIRONMENT_MASK: i16 = 0x07;
-    const DIMENSIONALITY_MASK: i16 = 0x20;
+    const DIMENSIONALITY_MASK: i16 = 0x18;
     const LAYOUT_MASK: i16 = 0x780;
 
     let byte_order = &buf[96..100];

@@ -6,7 +6,6 @@ use pyo3::prelude::PyDictMethods;
 use pyo3::types::{PyDict, PyString};
 use pyo3::{Bound, PyAny, PyResult, Python, pyclass, pymethods};
 use std::fs::File;
-use std::io::ErrorKind::InvalidInput;
 use sysinfo::System;
 
 use crate::decode::{
@@ -159,6 +158,11 @@ impl SegyFile {
 
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
+
+        if mmap.len() < 3600 {
+            return Err(PyIOError::new_err("File is too short..."));
+        };
+
         let b_header = match parse_binary_header(&mmap[3200..3600]) {
             Ok(h) => h,
             Err(e) => return Err(PyIOError::new_err(format!("Failed to open file: {e}"))),
@@ -260,10 +264,8 @@ impl SegyFile {
         let b_header = &self.b_header;
 
         if start >= end {
-            return Err(SegyError::Io(std::io::Error::new(
-                InvalidInput,
-                "Starting index must be lower than ending index",
-            )));
+            return Err(SegyError::InvalidArgument(
+                String::from("Starting index must be lower than ending index")));
         }
         if start == 0 || end as usize > trace_index.len() {
             return Err(SegyError::InvalidTraceRange {

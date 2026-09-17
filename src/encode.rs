@@ -178,7 +178,7 @@ fn encode_ext_txt_header(
     let padding = if is_ascii { 0x20u8 } else { 0x40u8 };
 
     for i in 0..ext_header_count {
-        let start = usize::try_from(3120 + i * 3200).expect("This value should never be negative");
+        let start = usize::try_from(3120i32 + i as i32 * 3200).expect("This value should never be negative");
         let end = (start + 3200).min(header.len());
         let slice = &header.as_bytes()[start..end];
 

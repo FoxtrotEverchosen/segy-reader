@@ -155,7 +155,7 @@ pub fn decode_i24_trace(data: &[u8], byte_order: ByteOrder) -> Result<TraceData,
         .chunks_exact(3)
         .map(|b| match byte_order {
             ByteOrder::LittleEndian => {
-                let sign = if b[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+                let sign = if b[2] & 0x80 != 0 { 0xFF } else { 0x00 };
                 Ok(i32::from_le_bytes([b[0], b[1], b[2], sign]))
             }
             ByteOrder::BigEndian => {
