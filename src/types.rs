@@ -64,8 +64,6 @@ pub enum SegyError {
     DecodingError(String),
     InvalidArgument(String),
     UnsupportedDataFormat,
-    CorruptTrace,
-    ParseFailure,
     RequestMemoryError,
 }
 
@@ -90,8 +88,6 @@ impl Display for SegyError {
                 format!("Invalid trace range. ({start} to {end} in file with {trace_count} traces)")
             }
             SegyError::UnsupportedDataFormat => String::from("Unsupported data format"),
-            SegyError::CorruptTrace => String::from("Corrupt trace segment"),
-            SegyError::ParseFailure => String::from("Failed to parse data"),
             SegyError::DecodingError(e) => format!("Decoding error: {e}"),
             SegyError::RequestMemoryError => {
                 String::from("Requested data exceeds your memory limit, try with smaller trace range.")
@@ -109,8 +105,6 @@ impl SegyError {
             SegyError::TraceOutOfRange { .. } => "out_of_range",
             SegyError::InvalidTraceRange { .. } => "invalid_range",
             SegyError::UnsupportedDataFormat => "unsupported_format",
-            SegyError::CorruptTrace => "corrupt_trace",
-            SegyError::ParseFailure => "parse_failure",
             SegyError::RequestMemoryError => "memory_error",
             SegyError::DecodingError(_) => "decoding_error",
             SegyError::InvalidArgument(_) => "argument_error",

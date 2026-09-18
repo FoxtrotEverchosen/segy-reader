@@ -483,7 +483,7 @@ class App(QMainWindow):
             BYTE_ORDER.get(self.metadata["Byte Order"]),
             BYTES_PER_SAMPLE
         )
-        traces = self.trace_data.T  # undo the transpose done at load time → (n_traces, n_samples)
+        traces = self.trace_data.T  # undo the transpose done at load time
         n_traces = traces.shape[0]
         n_samples = traces.shape[1]
 
