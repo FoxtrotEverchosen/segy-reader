@@ -2,6 +2,7 @@ use crate::types::{ByteOrder, SegyError, TraceData};
 
 #[allow(clippy::cast_precision_loss)]
 #[allow(clippy::cast_possible_wrap)]
+#[allow(clippy::cast_possible_truncation)]
 pub fn ibmf32_from_order(bytes: [u8; 4], byte_order: ByteOrder) -> f32 {
     // IBMf32 -> 1 sign bit, 7 exponent bits, 24 mantissa bits
     // unlike IEEE754, IBM 32-bit float uses base 16 exponent
@@ -17,9 +18,9 @@ pub fn ibmf32_from_order(bytes: [u8; 4], byte_order: ByteOrder) -> f32 {
 
     let sign = if (word & 0x8000_0000) != 0 { -1.0 } else { 1.0 };
     let exponent = ((word >> 24) & 0x7F) as i32;
-    let mantissa = (word & 0x00FF_FFFF) as f32 / (1 << 24) as f32;
+    let mantissa = f64::from(word & 0x00FF_FFFF) / f64::from(1u32 << 24);
 
-    sign * mantissa * 16f32.powi(exponent - 64)
+    (sign * mantissa * 16f64.powi(exponent - 64)) as f32
 }
 
 pub fn ieef32_from_order(bytes: [u8; 4], byte_order: ByteOrder) -> f32 {
@@ -196,3 +197,7 @@ pub fn decode_i64_trace(data: &[u8], byte_order: ByteOrder) -> TraceData {
 
     TraceData::I64(traces)
 }
+
+#[cfg(test)]
+#[path = "decode_tests.rs"]
+mod tests;
