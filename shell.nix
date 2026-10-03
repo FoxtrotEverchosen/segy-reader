@@ -15,6 +15,7 @@ pkgs.mkShell {
     pyqt6
     scipy
     pytest
+    segyio
   ]);
 
   NIX_ENFORCE_PURITY = "0";
