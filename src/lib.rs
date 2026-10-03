@@ -17,3 +17,6 @@ fn _fastsegy(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(save_segy, m)?)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod test_support;
