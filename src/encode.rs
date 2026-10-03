@@ -8,6 +8,11 @@ use std::io::{BufWriter, Write};
 // There exists a discrepancy between types stored by the HeaderConfig and types stored by
 // BinaryHeader struct that represent the same data. That is a deliberate decision, since SEGY
 // standard require the data to be encoded as specific data type (mainly i16 with exceptions).
+//
+// NOTE: The process of saving data may loose some data carried by trace headers. That data is not
+// copied, but is mostly recreated based on the properties of trace itself!
+//
+
 #[pyclass]
 #[derive(Clone, Copy)]
 pub struct BinaryHeaderConfig {
@@ -93,6 +98,13 @@ pub fn save_segy(
     };
 
     let n_samples = b_header_config.samples_per_trace as usize;
+
+    let expected_len = n_traces * n_samples * b_header_config.bytes_per_sample;
+    if raw_traces.len() != expected_len {
+        return Err(PyErr::new::<PyValueError, _>(format!(
+            "raw_traces holds {} bytes, but {n_traces} traces x {n_samples} samples x {} bytes need {expected_len}",
+            raw_traces.len(), b_header_config.bytes_per_sample)));
+    }
 
     // create() truncates file if it exists, informing user of overriding file should be done via GUI window
     let file = File::create(file_path)?;
@@ -234,3 +246,7 @@ fn encode_traces(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "encode_tests.rs"]
+mod tests;
