@@ -21,6 +21,10 @@ dev = [
 python-source = "python"
 manifest-path = "Cargo.toml"
 module-name = "fastsegy._fastsegy"
+features = ["extension-module"]
 
 [tool.pyright]
 typeCheckingMode = "basic"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
