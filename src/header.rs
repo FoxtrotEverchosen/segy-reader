@@ -46,7 +46,7 @@ pub fn parse_binary_header(buf: &[u8]) -> Result<BinaryHeader, SegyError> {
 
     let sample_interval = reader.read_i16(3217);
     let data_format = reader.read_i16(3225);
-    let samples_per_trace = usize::try_from(reader.read_i16(3221)).expect("Samples per trace should never be negative");
+    let samples_per_trace = usize::from(reader.read_u16(3221));
 
     // As per the SEG-Y documentation this field could store -1 to represent variable number of ext. headers.
     // For now, the variable number of ext. textual headers will throw error
@@ -164,6 +164,16 @@ impl<'a> HeaderReader<'a> {
         }
     }
 
+    pub(crate) fn read_u16(&self, doc_byte: usize) -> u16 {
+            let ofs = self.offset(doc_byte);
+            let bytes = [self.buf[ofs], self.buf[ofs + 1]];
+            match self.order {
+                ByteOrder::BigEndian => u16::from_be_bytes(bytes),
+                ByteOrder::LittleEndian => u16::from_le_bytes(bytes),
+                ByteOrder::SwappedWord => u16::from_be_bytes([bytes[1], bytes[0]]),
+            }
+        }
+
     fn read_u64(&self, doc_byte: usize) -> u64 {
         let ofs = self.offset(doc_byte);
         let bytes = self.buf[ofs..ofs + 8]
@@ -178,3 +188,7 @@ impl<'a> HeaderReader<'a> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "header_tests.rs"]
+mod tests;

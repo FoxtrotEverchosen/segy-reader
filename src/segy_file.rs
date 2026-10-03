@@ -198,7 +198,7 @@ impl SegyFile {
 
             // This reads sample count from TRACE header, which *should* be more accurate
             let samples_in_trace =
-                usize::try_from(reader.read_i16(115)).expect("Sample count in trace cannot be negative");
+                usize::from(reader.read_u16(115));
             let samples = if samples_in_trace == 0 {
                 b_header.samples_per_trace
             } else {
@@ -244,7 +244,7 @@ impl SegyFile {
             .expect("Mmap should have failed before any offset could exceed usize::MAX");
 
         let reader = HeaderReader::new(&self.mmap[trace_start..trace_start + 240], 0, b_header.byte_order);
-        let samples_in_trace = usize::try_from(reader.read_i16(115)).expect("Sample count in trace cannot be negative");
+        let samples_in_trace = usize::from(reader.read_u16(115));
         let samples = if samples_in_trace == 0 {
             b_header.samples_per_trace
         } else {
@@ -296,7 +296,7 @@ impl SegyFile {
 
                 let reader = HeaderReader::new(&self.mmap[trace_start..trace_start + 240], 0, b_header.byte_order);
                 let samples_in_trace =
-                    usize::try_from(reader.read_i16(115)).expect("samples in trace cannot be negative");
+                    usize::from(reader.read_u16(115));
 
                 let samples = if samples_in_trace == 0 {
                     b_header.samples_per_trace
@@ -358,3 +358,7 @@ pub fn trace_to_numpy(py: Python, trace: TraceData) -> Bound<PyAny> {
         TraceData::U64(v) => convert!(v),
     }
 }
+
+#[cfg(test)]
+#[path = "segy_file_tests.rs"]
+mod tests;
