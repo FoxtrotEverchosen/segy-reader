@@ -5,7 +5,11 @@ on:
     tags: ['v*']
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   build:
+    needs: test
     strategy:
       matrix:
         include:
@@ -24,6 +28,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -62,7 +68,7 @@ jobs:
             --noinclude-setuptools-mode=nofollow \
             --noinclude-unittest-mode=nofollow \
             --include-qt-plugins=sensible \
-            --output-filename=segy-reader \
+            --output-filename=${{ matrix.output }} \
             python/fastsegy/gui/app.py
 
       - name: Build executable (Windows)
@@ -81,10 +87,11 @@ jobs:
             --noinclude-setuptools-mode=nofollow `
             --noinclude-unittest-mode=nofollow `
             --include-qt-plugins=sensible `
-            --output-filename=segy-reader `
+            --output-filename=${{ matrix.output }} `
             python/fastsegy/gui/app.py
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.output }}
+          fail_on_unmatched_files: true
