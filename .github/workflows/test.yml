@@ -1,0 +1,32 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Rust tests
+        run: cargo test
+        env:
+          LD_LIBRARY_PATH: ${{ env.pythonLocation }}/lib
+
+      - name: Install the package with test dependencies
+        run: pip install ".[dev]"
+
+      - name: Python tests
+        run: pytest
