@@ -20,7 +20,7 @@ pub struct BinaryHeaderConfig {
     #[pyo3(get, set)]
     sample_interval: i16, // 16-17
     #[pyo3(get, set)]
-    samples_per_trace: i16, // 20-21
+    samples_per_trace: u16, // 20-21
     #[pyo3(get, set)]
     data_format: i16, // 24-25
     #[pyo3(get, set)]
@@ -48,7 +48,7 @@ impl BinaryHeaderConfig {
     #[allow(clippy::too_many_arguments)]
     fn new(
         sample_interval: i16,
-        samples_per_trace: i16,
+        samples_per_trace: u16,
         data_format: i16,
         revision_number: i16,
         fixed_length: i16,
@@ -97,7 +97,18 @@ pub fn save_segy(
         }
     };
 
-    let n_samples = b_header_config.samples_per_trace as usize;
+
+    let n_samples = usize::from(b_header_config.samples_per_trace);
+
+    // Validate before File::create, which truncates an existing file
+    let expected_len = n_traces * n_samples * b_header_config.bytes_per_sample;
+    if raw_traces.len() != expected_len {
+        return Err(PyErr::new::<PyValueError, _>(format!(
+            "raw_traces holds {} bytes, but {n_traces} traces x {n_samples} samples x {} bytes need {expected_len}",
+            raw_traces.len(),
+            b_header_config.bytes_per_sample
+        )));
+    }
 
     let expected_len = n_traces * n_samples * b_header_config.bytes_per_sample;
     if raw_traces.len() != expected_len {
@@ -110,10 +121,9 @@ pub fn save_segy(
     let file = File::create(file_path)?;
     let mut writer = BufWriter::new(file);
     let mut ext_header_count: i16 = 0;
-
-    // last row left for padding
-    if textual_header.len() > 3120 {
-        ext_header_count = ((textual_header.len() as f64 - 3120.0) / 3200.0).ceil() as i16;
+ 
+    if textual_header.len() > 3200 {
+        ext_header_count = ((textual_header.len() as f64 - 3200.0) / 3200.0).ceil() as i16;
     }
 
     encode_txt_header(is_ascii, textual_header, &mut writer)?;
@@ -143,10 +153,20 @@ fn encode_bin_header(
         ByteOrder::LittleEndian | ByteOrder::SwappedWord => v.to_le_bytes(),
     };
 
+    let u16_bytes = |v: u16| match byte_order {
+        ByteOrder::BigEndian => v.to_be_bytes(),
+        ByteOrder::LittleEndian | ByteOrder::SwappedWord => v.to_le_bytes(),
+    };
+
     header[16..18].copy_from_slice(&i16_bytes(conf.sample_interval));
-    header[20..22].copy_from_slice(&i16_bytes(conf.samples_per_trace));
+    header[20..22].copy_from_slice(&u16_bytes(conf.samples_per_trace));
     header[24..26].copy_from_slice(&i16_bytes(conf.data_format));
-    header[300..302].copy_from_slice(&i16_bytes(conf.revision_number));
+
+    // Major and minor fields are seperate 8-bit fields. Byte order does not apply
+    let [rev_major, rev_minor] = conf.revision_number.to_be_bytes();
+    header[300] = rev_major;
+    header[301] = rev_minor;
+
     header[302..304].copy_from_slice(&i16_bytes(conf.fixed_length));
     header[304..306].copy_from_slice(&i16_bytes(ext_header_count));
 
@@ -174,7 +194,7 @@ fn encode_txt_header(is_ascii: bool, header: &str, writer: &mut BufWriter<File>)
         ebcdic
     };
 
-    let len = src.len().min(3120);
+    let len = src.len().min(3200);
     buf[..len].copy_from_slice(&src[..len]);
     writer.write_all(&buf)?;
 
@@ -190,7 +210,7 @@ fn encode_ext_txt_header(
     let padding = if is_ascii { 0x20u8 } else { 0x40u8 };
 
     for i in 0..ext_header_count {
-        let start = usize::try_from(3120i32 + i as i32 * 3200).expect("This value should never be negative");
+        let start = usize::try_from(3200i32 + i as i32 * 3200).expect("This value should never be negative");
         let end = (start + 3200).min(header.len());
         let slice = &header.as_bytes()[start..end];
 
@@ -223,13 +243,13 @@ fn encode_traces(
     let bytes_per_sample = conf.bytes_per_sample;
     let trace_data_size = n_samples * bytes_per_sample;
 
-    let i16_bytes = |v: i16| match byte_order {
+    let u16_bytes = |v: u16| match byte_order {
         ByteOrder::BigEndian => v.to_be_bytes(),
         // for 16-bit le is equivalent to swapped word
         ByteOrder::LittleEndian | ByteOrder::SwappedWord => v.to_le_bytes(),
     };
 
-    let samples_per_trace = i16_bytes(conf.samples_per_trace);
+    let samples_per_trace = u16_bytes(conf.samples_per_trace);
 
     for i in 0..n_traces {
         // encode trace header (240 bytes)
