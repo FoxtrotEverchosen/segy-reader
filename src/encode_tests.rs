@@ -16,6 +16,12 @@ use crate::test_support::ascii_to_ebcdic;
 
 const ORDERS: [ByteOrder; 3] = [ByteOrder::BigEndian, ByteOrder::LittleEndian, ByteOrder::SwappedWord];
 
+/// How many text bytes fit in the main textual header before the rest spills into extended
+/// headers. A real text header is 40 cards x 80 columns = 3200 bytes, and the GUI saves exactly
+/// what `get_header` returned (newlines removed), so the capacity has to be 3200: with a smaller
+/// one every save adds an extended header (3120 was the original value, which made files grow).
+const MAIN_TEXT_CAPACITY: usize = 3200;
+
 // ---------------------------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------------------------
@@ -82,8 +88,8 @@ fn pattern(len: usize) -> String {
 }
 
 /// The text blocks a correct writer produces, worked out independently of the encoder: the main
-/// header carries at most 3120 bytes (the last 80-byte row stays padding), each extended header
-/// the next 3200, and every block is padded to 3200 bytes.
+/// header carries at most `MAIN_TEXT_CAPACITY` bytes, each extended header the next 3200, and
+/// every block is padded to 3200 bytes.
 fn expected_blocks(text: &str, ebcdic: bool) -> Vec<Vec<u8>> {
     let pad = if ebcdic { 0x40 } else { 0x20 };
     let convert = |b: u8| if ebcdic { ascii_to_ebcdic(b) } else { b };
@@ -96,7 +102,7 @@ fn expected_blocks(text: &str, ebcdic: bool) -> Vec<Vec<u8>> {
     };
 
     let bytes = text.as_bytes();
-    let (main, rest) = bytes.split_at(bytes.len().min(3120));
+    let (main, rest) = bytes.split_at(bytes.len().min(MAIN_TEXT_CAPACITY));
     let mut blocks = vec![block(main)];
     blocks.extend(rest.chunks(3200).map(block));
     blocks
@@ -167,6 +173,20 @@ fn optional_header_fields_are_written_when_given_and_zero_otherwise() {
     }
 }
 
+/// Revision is two independent 8-bit fields, major then minor (bytes 3501 and 3502), so the
+/// value 0x0100 (Rev 1.0) must produce the bytes 01 00 in every byte order. This is also what
+/// the reader assumes: it takes byte 3501 as the major revision.
+///
+/// Currently the encoder stores the revision as a 16-bit integer in file order, so little-endian
+/// and swapped-word files get 00 01, which the reader sees as major revision 0.
+#[test]
+fn revision_is_major_byte_then_minor_byte() {
+    for order in ORDERS {
+        let bytes = save(config(order), "", &[], true, 0);
+        assert_eq!(&bytes[3200 + 300..3200 + 302], &[0x01, 0x00], "{order:?}");
+    }
+}
+
 /// A zero byte-order field means "pre-Rev 2, big-endian". It is written as zeros.
 #[test]
 fn zero_byte_order_is_big_endian_and_stays_zero() {
@@ -202,20 +222,21 @@ fn saved_binary_header_is_accepted_by_the_parser() {
 // Textual headers
 // ---------------------------------------------------------------------------------------------
 
-/// The main header carries up to 3120 bytes; every further 3200 bytes need one more extended
-/// header.
+/// The main header carries up to `MAIN_TEXT_CAPACITY` bytes; every further 3200 bytes need one
+/// more extended header.
 #[test]
 fn extended_header_count_at_the_boundaries() {
     // (text length, expected number of extended headers)
+    let c = MAIN_TEXT_CAPACITY;
     let cases: [(usize, usize); 8] = [
         (0, 0),
         (1, 0),
-        (3120, 0),
-        (3121, 1),
-        (6320, 1),
-        (6321, 2),
-        (9520, 2),
-        (9521, 3),
+        (c, 0),
+        (c + 1, 1),
+        (c + 3200, 1),
+        (c + 3201, 2),
+        (c + 6400, 2),
+        (c + 6401, 3),
     ];
 
     for ascii in [true, false] {
@@ -231,7 +252,8 @@ fn extended_header_count_at_the_boundaries() {
 
 #[test]
 fn ascii_text_is_written_in_blocks_and_padded_with_spaces() {
-    for len in [0, 10, 3120, 3121, 6320, 6321, 7000] {
+    let c = MAIN_TEXT_CAPACITY;
+    for len in [0, 10, c, c + 1, c + 3200, c + 3201, c + 3800] {
         let text = pattern(len);
         let bytes = save(config(ByteOrder::BigEndian), &text, &[], true, 0);
         let blocks = expected_blocks(&text, false);
@@ -246,7 +268,8 @@ fn ascii_text_is_written_in_blocks_and_padded_with_spaces() {
 
 #[test]
 fn ebcdic_text_is_converted_and_padded_with_ebcdic_spaces() {
-    for len in [0, 10, 3120, 3121, 6321, 7000] {
+    let c = MAIN_TEXT_CAPACITY;
+    for len in [0, 10, c, c + 1, c + 3201, c + 3800] {
         let text = pattern(len);
         let bytes = save(config(ByteOrder::BigEndian), &text, &[], false, 0);
         let blocks = expected_blocks(&text, true);
@@ -271,11 +294,10 @@ fn ebcdic_header_with_letters_and_punctuation() {
     );
 }
 
-/// The reader recognises EBCDIC by looking at the last byte of the main header (0x40), so the
-/// writer must always leave that byte as padding, even for text that fills the header.
+/// Text that does not fill the main header leaves padding at its end.
 #[test]
-fn last_byte_of_the_main_header_is_always_padding() {
-    for len in [0, 3119, 3120, 3121, 5000] {
+fn short_text_leaves_padding_in_the_last_byte() {
+    for len in [0, 10, MAIN_TEXT_CAPACITY - 1] {
         let text = pattern(len);
         let ascii = save(config(ByteOrder::BigEndian), &text, &[], true, 0);
         let ebcdic = save(config(ByteOrder::BigEndian), &text, &[], false, 0);
