@@ -165,14 +165,14 @@ impl<'a> HeaderReader<'a> {
     }
 
     pub(crate) fn read_u16(&self, doc_byte: usize) -> u16 {
-            let ofs = self.offset(doc_byte);
-            let bytes = [self.buf[ofs], self.buf[ofs + 1]];
-            match self.order {
-                ByteOrder::BigEndian => u16::from_be_bytes(bytes),
-                ByteOrder::LittleEndian => u16::from_le_bytes(bytes),
-                ByteOrder::SwappedWord => u16::from_be_bytes([bytes[1], bytes[0]]),
-            }
+        let ofs = self.offset(doc_byte);
+        let bytes = [self.buf[ofs], self.buf[ofs + 1]];
+        match self.order {
+            ByteOrder::BigEndian => u16::from_be_bytes(bytes),
+            ByteOrder::LittleEndian => u16::from_le_bytes(bytes),
+            ByteOrder::SwappedWord => u16::from_be_bytes([bytes[1], bytes[0]]),
         }
+    }
 
     fn read_u64(&self, doc_byte: usize) -> u64 {
         let ofs = self.offset(doc_byte);
