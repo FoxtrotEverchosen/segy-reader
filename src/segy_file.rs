@@ -112,9 +112,9 @@ impl SegyFile {
         // In All Revision standards: textual header is 3200 bytes, padded with:
         // - 0x40 (EBCDIC space) for EBCDIC encoding
         // - 0x20 (ASCII space) for ASCII encoding
-        // This implementation checks last byte to determine encoding
-        // This should work every time, as it is extremely unlikely for a textual header to fill all 3200 bytes
-        let is_ebcdic = data[3199] == 0x40;
+        // This implementation counts 0x20 and 0x40 bytes, and assumes encoding based on their
+        // comparison.
+        let is_ebcdic = is_ebcdic(data);
         let ascii_buf = if is_ebcdic {
             let mut result = vec![0u8; 3200];
             Ebcdic::ebcdic_to_ascii(data, &mut result, data.len(), true, false);
@@ -194,16 +194,7 @@ impl SegyFile {
         //text header 3200, bin header 400
         let mut offset = 3600 + b_header.extended_text_header_count * 3200;
         while offset + 240 < mmap.len() {
-            let reader = HeaderReader::new(&mmap[offset..offset + 240], 0, b_header.byte_order);
-
-            // This reads sample count from TRACE header, which *should* be more accurate
-            let samples_in_trace =
-                usize::from(reader.read_u16(115));
-            let samples = if samples_in_trace == 0 {
-                b_header.samples_per_trace
-            } else {
-                samples_in_trace
-            };
+            let samples = samples_in_trace(&mmap[offset..offset + 240], b_header);
 
             let data_bytes = 240 + samples * b_header.bytes_per_sample;
             if offset + data_bytes > mmap.len() {
@@ -242,14 +233,7 @@ impl SegyFile {
 
         let trace_start = usize::try_from(trace_index[target as usize])
             .expect("Mmap should have failed before any offset could exceed usize::MAX");
-
-        let reader = HeaderReader::new(&self.mmap[trace_start..trace_start + 240], 0, b_header.byte_order);
-        let samples_in_trace = usize::from(reader.read_u16(115));
-        let samples = if samples_in_trace == 0 {
-            b_header.samples_per_trace
-        } else {
-            samples_in_trace
-        };
+        let samples = samples_in_trace(&self.mmap[trace_start..trace_start + 240], b_header);
 
         let data_bytes = samples * b_header.bytes_per_sample;
         let data_start = trace_start + 240;
@@ -280,8 +264,12 @@ impl SegyFile {
         // 12,5%
         let soft_cap = self.available_mem / 8;
         let mem_cap = soft_cap.max(512 * 1024 * 1024);
-        let trace_count = (end - start + 1) as usize;
-        let total_bytes = trace_count * b_header.samples_per_trace * b_header.bytes_per_sample;
+        let total_bytes: usize = ((start - 1) as usize..end as usize)
+            .map(|t| {
+                let s = usize::try_from(trace_index[t]).expect("offset fits in usize");
+                samples_in_trace(&self.mmap[s..s + 240], b_header) * b_header.bytes_per_sample
+            })
+            .sum();
 
         if total_bytes as u64 > mem_cap {
             return Err(SegyError::RequestMemoryError);
@@ -294,16 +282,7 @@ impl SegyFile {
                 let trace_start = usize::try_from(trace_index[target])
                     .expect("mmap would have failed before offset exceeds usize::MAX");
 
-                let reader = HeaderReader::new(&self.mmap[trace_start..trace_start + 240], 0, b_header.byte_order);
-                let samples_in_trace =
-                    usize::from(reader.read_u16(115));
-
-                let samples = if samples_in_trace == 0 {
-                    b_header.samples_per_trace
-                } else {
-                    samples_in_trace
-                };
-
+                let samples = samples_in_trace(&self.mmap[trace_start..trace_start + 240], b_header);
                 let data_bytes = samples * b_header.bytes_per_sample;
                 let data_start = trace_start + 240;
                 let raw_buf = &self.mmap[data_start..data_start + data_bytes];
@@ -356,6 +335,19 @@ pub fn trace_to_numpy(py: Python, trace: TraceData) -> Bound<PyAny> {
         TraceData::U24(v) => convert!(v),
         TraceData::U32(v) => convert!(v),
         TraceData::U64(v) => convert!(v),
+    }
+}
+
+fn is_ebcdic(header: &[u8]) -> bool {
+    let count = |b: u8| header.iter().filter(|&&x| x == b).count();
+    count(0x40) > count(0x20)
+}
+
+fn samples_in_trace(header: &[u8], b_header: &BinaryHeader) -> usize {
+    let reader = HeaderReader::new(header, 0, b_header.byte_order);
+    match usize::from(reader.read_u16(115)) {
+        0 => b_header.samples_per_trace,
+        n => n,
     }
 }
 
